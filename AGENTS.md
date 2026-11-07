@@ -29,10 +29,24 @@ broadcast, optional queued listeners.
    it.
 4. **Plan, then wait.** Write an implementation plan and get an explicit
    go-ahead before writing code. Never implement without confirmation.
-5. **Keep comments short.** Explain how the code flows, not why a decision was
-   made.
-6. **Keep this file current.** It is not static. When a new feature or piece of
+5. **Comment in blocks.** Group code into blocks of 2–5 lines and put a brief
+   comment above each block explaining what happens there. Explain how the code
+   flows, not why a decision was made.
+6. **Prefer `FoundationEssentials`.** Use a guarded import so the core works on
+   toolchains that expose it and falls back to `Foundation` otherwise:
+
+   ```swift
+   #if canImport(FoundationEssentials)
+   import FoundationEssentials
+   #else
+   import Foundation
+   #endif
+   ```
+7. **Keep this file current.** It is not static. When a new feature or piece of
    information conflicts with it, check with the user and update it.
+8. **The user edits alongside you.** Re-read a file before editing it. If
+   something is unclear or conflicts with what you expect, ask. Never override
+   or reintroduce changes the user has made.
 
 ## Commands
 

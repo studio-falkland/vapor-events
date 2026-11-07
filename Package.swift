@@ -22,6 +22,10 @@ let package = Package(
             ]
         ),
         .testTarget(
+            name: "VaporEventsCoreTests",
+            dependencies: ["VaporEventsCore"]
+        ),
+        .testTarget(
             name: "VaporEventsTests",
             dependencies: ["VaporEvents"]
         ),
