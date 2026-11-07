@@ -17,6 +17,15 @@ public actor EventDispatcher {
     /// Registrations keyed by event name, sorted by priority.
     private var registrations: [String: [Registration]] = [:]
 
+    /// A type-erased stream registration.
+    private struct StreamRegistration: Sendable {
+        let id: UUID
+        let yield: @Sendable (any Event) -> Void
+    }
+
+    /// Streams keyed by event name.
+    private var streams: [String: [StreamRegistration]] = [:]
+
     /// Creates a dispatcher.
     public init() {}
 
@@ -89,6 +98,42 @@ public actor EventDispatcher {
         self.add(registration, for: eventName)
     }
 
+    /// Creates a live stream of events.
+    ///
+    /// - Parameters:
+    ///   - eventType: The event type to stream.
+    ///   - bufferingPolicy: How to buffer events for slow consumers.
+    /// - Returns: A cancellable stream of events.
+    public func stream<E: Event>(
+        _ eventType: E.Type,
+        bufferingPolicy: AsyncStream<E>.Continuation.BufferingPolicy = .bufferingNewest(64)
+    ) -> EventStream<E> {
+        // Create the stream and its continuation.
+        let id = UUID()
+        let (stream, continuation) = AsyncStream<E>.makeStream(bufferingPolicy: bufferingPolicy)
+
+        // Register a type-erased yield closure.
+        let registration = StreamRegistration(
+            id: id,
+            yield: { event in
+                guard let typed = event as? E else { return }
+                continuation.yield(typed)
+            }
+        )
+        self.streams[E.name, default: []].append(registration)
+
+        // Remove the registration when the stream terminates.
+        continuation.onTermination = { [weak self] _ in
+            guard let self else { return }
+            Task { await self.removeStream(id: id, for: E.name) }
+        }
+
+        // Return a cancellable stream.
+        return EventStream(stream: stream) {
+            continuation.finish()
+        }
+    }
+
     /// Dispatches an event to its registered listeners.
     ///
     /// Listeners run in priority order. The first error stops dispatch and is
@@ -104,6 +149,12 @@ public actor EventDispatcher {
         for registration in registrations {
             try await registration.handle(event)
         }
+
+        // Feed live streams after listeners.
+        let streams = self.streams[E.name] ?? []
+        for stream in streams {
+            stream.yield(event)
+        }
     }
 
     /// Inserts a registration in priority order.
@@ -115,5 +166,13 @@ public actor EventDispatcher {
         // Insert after any equal-priority listeners.
         list.insert(registration, at: index)
         self.registrations[eventName] = list
+    }
+
+    /// Removes a stream registration.
+    private func removeStream(id: UUID, for eventName: String) {
+        // Drop the registration with the matching identifier.
+        guard var list = self.streams[eventName] else { return }
+        list.removeAll { $0.id == id }
+        self.streams[eventName] = list
     }
 }

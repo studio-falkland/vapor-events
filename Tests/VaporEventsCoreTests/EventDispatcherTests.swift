@@ -6,11 +6,11 @@ import Foundation
 import Testing
 @testable import VaporEventsCore
 
-private struct OrderShipped: Event {
+struct OrderShipped: Event {
     let orderID: UUID
 }
 
-private actor Recorder {
+actor Recorder {
     private(set) var orderIDs: [UUID] = []
 
     func record(_ event: OrderShipped) {
@@ -18,7 +18,7 @@ private actor Recorder {
     }
 }
 
-private struct RecordingListener: EventListener {
+struct RecordingListener: EventListener {
     let recorder: Recorder
 
     func handle(_ event: OrderShipped) async throws {
@@ -26,7 +26,7 @@ private struct RecordingListener: EventListener {
     }
 }
 
-private actor SequenceRecorder {
+actor SequenceRecorder {
     private(set) var values: [String] = []
 
     func record(_ value: String) {
@@ -34,7 +34,7 @@ private actor SequenceRecorder {
     }
 }
 
-private struct LowPriorityListener: EventListener {
+struct LowPriorityListener: EventListener {
     static let priority = 0
 
     let record: @Sendable (OrderShipped) async -> Void
@@ -44,7 +44,7 @@ private struct LowPriorityListener: EventListener {
     }
 }
 
-private struct HighPriorityListener: EventListener {
+struct HighPriorityListener: EventListener {
     static let priority = 10
 
     let record: @Sendable (OrderShipped) async -> Void
@@ -54,17 +54,17 @@ private struct HighPriorityListener: EventListener {
     }
 }
 
-private enum TestError: Error {
+enum TestError: Error {
     case failed
 }
 
-private struct ThrowingListener: EventListener {
+struct ThrowingListener: EventListener {
     func handle(_ event: OrderShipped) async throws {
         throw TestError.failed
     }
 }
 
-private actor Counter {
+actor Counter {
     private(set) var count = 0
 
     func increment() {
@@ -76,7 +76,7 @@ private actor Counter {
     }
 }
 
-private struct CountingListener: EventListener {
+struct CountingListener: EventListener {
     let counter: Counter
 
     func handle(_ event: OrderShipped) async throws {
