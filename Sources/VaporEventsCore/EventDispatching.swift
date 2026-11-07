@@ -33,6 +33,12 @@ public protocol EventDispatching: Sendable {
         _ eventType: E.Type,
         bufferingPolicy: AsyncStream<E>.Continuation.BufferingPolicy
     ) async -> EventStream<E>
+
+    /// Starts receiving broadcast events.
+    func start() async
+
+    /// Stops receiving broadcast events.
+    func shutdown() async
 }
 
 extension EventDispatching {

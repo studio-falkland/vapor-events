@@ -7,7 +7,7 @@ import Foundation
 /// Registers listeners and dispatches events.
 public actor EventDispatcher: EventDispatching {
     /// A type-erased listener registration.
-    private struct Registration: Sendable {
+    struct Registration: Sendable {
         let eventName: String
         let listenerName: String
         let priority: Int
@@ -15,19 +15,34 @@ public actor EventDispatcher: EventDispatching {
     }
 
     /// Registrations keyed by event name, sorted by priority.
-    private var registrations: [String: [Registration]] = [:]
+    var registrations: [String: [Registration]] = [:]
 
     /// A type-erased stream registration.
-    private struct StreamRegistration: Sendable {
+    struct StreamRegistration: Sendable {
         let id: UUID
         let yield: @Sendable (any Event) -> Void
     }
 
     /// Streams keyed by event name.
-    private var streams: [String: [StreamRegistration]] = [:]
+    var streams: [String: [StreamRegistration]] = [:]
+
+    /// Decoders keyed by event name.
+    var decoders: [String: @Sendable (Data) throws -> any Event] = [:]
+
+    /// Broadcasting state.
+    var broadcast: BroadcastState
 
     /// Creates a dispatcher.
-    public init() {}
+    ///
+    /// - Parameters:
+    ///   - broadcaster: The broadcaster used for published events.
+    ///   - instanceID: The identifier used to suppress echoes.
+    public init(
+        broadcaster: any EventBroadcaster = InProcessBroadcaster(),
+        instanceID: String = UUID().uuidString
+    ) {
+        self.broadcast = BroadcastState(broadcaster: broadcaster, instanceID: instanceID)
+    }
 
     /// Registers a listener for its event type.
     ///
@@ -56,7 +71,10 @@ public actor EventDispatcher: EventDispatching {
             handle: handle
         )
 
-        // Insert the registration in priority order.
+        // Register the decoder and insert the registration.
+        self.decoders[eventName] = { data in
+            try JSONDecoder().decode(L.EventType.self, from: data)
+        }
         self.add(registration, for: eventName)
     }
 
@@ -94,7 +112,10 @@ public actor EventDispatcher: EventDispatching {
             handle: handle
         )
 
-        // Insert the registration in priority order.
+        // Register the decoder and insert the registration.
+        self.decoders[eventName] = { data in
+            try JSONDecoder().decode(E.self, from: data)
+        }
         self.add(registration, for: eventName)
     }
 
@@ -121,6 +142,11 @@ public actor EventDispatcher: EventDispatching {
             }
         )
         self.streams[E.name, default: []].append(registration)
+
+        // Register the decoder.
+        self.decoders[E.name] = { data in
+            try JSONDecoder().decode(E.self, from: data)
+        }
 
         // Remove the registration when the stream terminates.
         continuation.onTermination = { [weak self] _ in
@@ -154,6 +180,11 @@ public actor EventDispatcher: EventDispatching {
         let streams = self.streams[E.name] ?? []
         for stream in streams {
             stream.yield(event)
+        }
+
+        // Publish broadcast events.
+        if E.self is any ShouldBroadcast.Type {
+            try await self.publish(event)
         }
     }
 

@@ -114,6 +114,12 @@ public actor FakeEventDispatcher: EventDispatching {
         }
     }
 
+    /// Does nothing.
+    public func start() {}
+
+    /// Does nothing.
+    public func shutdown() {}
+
     /// Clears recorded events and registrations.
     public func reset() {
         self.recorded.removeAll()

@@ -15,6 +15,9 @@ extension Application {
                 // Create and store the dispatcher.
                 let dispatcher = EventDispatcher()
                 self.storage[EventDispatcherKey.self] = dispatcher
+
+                // Start and stop the dispatcher with the application.
+                self.lifecycle.use(EventDispatcherLifecycle(dispatcher: dispatcher))
                 return dispatcher
             }
         }
@@ -28,5 +31,17 @@ extension Application {
 
     private struct EventDispatcherKey: StorageKey, LockKey {
         typealias Value = any EventDispatching
+    }
+}
+
+private struct EventDispatcherLifecycle: LifecycleHandler {
+    let dispatcher: any EventDispatching
+
+    func didBootAsync(_ application: Application) async throws {
+        await self.dispatcher.start()
+    }
+
+    func shutdownAsync(_ application: Application) async {
+        await self.dispatcher.shutdown()
     }
 }
