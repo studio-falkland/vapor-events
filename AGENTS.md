@@ -10,6 +10,8 @@ broadcast, optional queued listeners.
 - `VaporEventsCore` does not import Vapor.
 - `VaporEvents` is the Vapor 4 adapter and re-exports the core.
 - `Event` is a `Codable`, `Sendable` value type. `EventListener` handles one event type.
+- `EventDispatching` is the dispatcher protocol. `EventDispatcher` is the production
+  implementation; `FakeEventDispatcher` and assertions live in `Testing/`.
 - `ShouldBroadcast` on the event publishes to an `EventBroadcaster`.
 - `ShouldQueue` on the listener routes it to a queue instead of running inline.
 - `ShouldQueue` wins over broadcast fan-out for that listener.

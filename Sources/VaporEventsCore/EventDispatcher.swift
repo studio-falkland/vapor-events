@@ -5,7 +5,7 @@ import Foundation
 #endif
 
 /// Registers listeners and dispatches events.
-public actor EventDispatcher {
+public actor EventDispatcher: EventDispatching {
     /// A type-erased listener registration.
     private struct Registration: Sendable {
         let eventName: String

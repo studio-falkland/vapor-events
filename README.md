@@ -27,8 +27,52 @@ targets: [
 
 ## Usage
 
-The public API is being implemented. See `AGENTS.md` for the architecture and
-the current implementation tier.
+Define an event and a listener:
+
+```swift
+struct OrderShipped: Event {
+    let orderID: UUID
+}
+
+struct SendReceipt: EventListener {
+    let mailer: Mailer
+
+    func handle(_ event: OrderShipped) async throws {
+        try await self.mailer.sendReceipt(for: event.orderID)
+    }
+}
+```
+
+Register listeners in `configure`:
+
+```swift
+await app.events.listen(SendReceipt(mailer: app.mailer))
+```
+
+Dispatch from a route:
+
+```swift
+try await req.events.dispatch(OrderShipped(orderID: id))
+```
+
+Stream events as an `AsyncSequence`:
+
+```swift
+let events = await req.events.stream(OrderShipped.self)
+for await event in events {
+    // Consume the event.
+}
+```
+
+Test with the fake dispatcher:
+
+```swift
+let fake = FakeEventDispatcher()
+app.events = fake
+
+try await req.events.dispatch(OrderShipped(orderID: id))
+let events = await fake.dispatched(OrderShipped.self)
+```
 
 ## Running Tests
 

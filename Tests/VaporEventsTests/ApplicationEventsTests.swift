@@ -38,7 +38,7 @@ struct ApplicationEventsTests {
         // Verify the accessor returns one shared dispatcher.
         let first = app.events
         let second = app.events
-        #expect(first === second)
+        #expect((first as AnyObject) === (second as AnyObject))
     }
 
     @Test
