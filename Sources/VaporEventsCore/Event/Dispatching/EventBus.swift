@@ -6,6 +6,9 @@
 public protocol EventBus: Sendable {
     /// Registers a listener for its event type.
     ///
+    /// Listeners that conform to ``ShouldQueue`` are enqueued instead of
+    /// run during dispatch.
+    ///
     /// - Parameter listener: The listener to register.
     func listen<L: EventListener>(_ listener: L) async
 
@@ -43,6 +46,9 @@ public protocol EventBus: Sendable {
     ) async -> AsyncStream<E>
 
     /// Receives an event without notifying observers.
+    ///
+    /// Queued listeners are skipped, because the publishing instance already
+    /// enqueued them.
     ///
     /// - Parameter event: The event to receive.
     func receive<E: Event>(_ event: E) async throws

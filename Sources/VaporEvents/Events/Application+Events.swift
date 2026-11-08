@@ -12,8 +12,11 @@ extension Application {
                     return existing
                 }
 
-                // Create and store the dispatcher.
-                let dispatcher = EventDispatcher()
+                // Create and store a dispatcher that enqueues queued listeners.
+                let application = self
+                let dispatcher = EventDispatcher(
+                    enqueuing: QueueEnqueuing(application: { [weak application] in application })
+                )
                 self.storage[EventDispatcherKey.self] = dispatcher
                 return dispatcher
             }

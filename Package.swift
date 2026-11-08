@@ -13,6 +13,7 @@ let package = Package(
     dependencies: [
         .package(url: "https://github.com/vapor/vapor.git", from: "4.122.3"),
         .package(url: "https://github.com/vapor/postgres-nio.git", from: "1.33.1"),
+        .package(url: "https://github.com/vapor/queues.git", from: "1.0.0"),
         .package(url: "https://github.com/apple/swift-log.git", from: "1.5.0"),
     ],
     targets: [
@@ -27,6 +28,7 @@ let package = Package(
             dependencies: [
                 "VaporEventsCore",
                 .product(name: "Vapor", package: "vapor"),
+                .product(name: "Queues", package: "queues"),
             ]
         ),
         .target(
@@ -45,7 +47,11 @@ let package = Package(
         ),
         .testTarget(
             name: "VaporEventsTests",
-            dependencies: ["VaporEvents"]
+            dependencies: [
+                "VaporEvents",
+                .product(name: "Vapor", package: "vapor"),
+                .product(name: "XCTQueues", package: "queues"),
+            ]
         ),
         .testTarget(
             name: "VaporEventsPostgresTests",

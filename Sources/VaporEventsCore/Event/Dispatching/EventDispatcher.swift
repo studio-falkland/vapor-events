@@ -7,8 +7,9 @@ import Foundation
 /// The production ``EventBus``.
 ///
 /// The dispatcher is an actor, so registration and dispatch are safe from any
-/// thread. Listeners run sequentially in priority order; the first error stops
-/// dispatch and is rethrown. Streams are fed after listeners.
+/// thread. Listeners run sequentially in priority order; the first error
+/// stops dispatch and is rethrown. Streams are fed after listeners. Queued
+/// listeners are delegated to an ``EventEnqueuing``.
 public actor EventDispatcher: EventBus, EventObserving {
     /// A type-erased listener registration.
     struct Registration: Sendable {
@@ -30,16 +31,38 @@ public actor EventDispatcher: EventBus, EventObserving {
     /// Event types that have already been registered.
     private var registeredEventTypes: Set<ObjectIdentifier> = []
 
+    /// The handler used to enqueue ``ShouldQueue`` listeners.
+    private let enqueuing: (any EventEnqueuing)?
+
     /// Creates a dispatcher.
-    public init() {}
+    ///
+    /// - Parameter enqueuing: The handler used to enqueue ``ShouldQueue``
+    ///   listeners. The Vapor adapter supplies one automatically.
+    public init(enqueuing: (any EventEnqueuing)? = nil) {
+        self.enqueuing = enqueuing
+    }
 
     /// Registers a listener for its event type.
+    ///
+    /// Listeners that conform to ``ShouldQueue`` are enqueued instead of
+    /// run during dispatch.
     ///
     /// - Parameter listener: The listener to register.
     public func listen<L: EventListener>(_ listener: L) async {
         // Resolve the event name and listener identity.
         let eventName = L.EventType.name
         let listenerName = String(reflecting: L.self)
+
+        // Queued listeners are owned by the enqueuing, not the dispatcher.
+        if L.self is any ShouldQueue.Type {
+            guard let enqueuing = self.enqueuing else {
+                preconditionFailure(
+                    "ShouldQueue listeners require an EventEnqueuing. Use the VaporEvents product or pass one to EventDispatcher.init(enqueuing:)."
+                )
+            }
+            enqueuing.register(listener)
+            return
+        }
 
         // Capture the listener and cast incoming events back to its type.
         let handle: @Sendable (any Event) async throws -> Void = { event in
@@ -126,25 +149,31 @@ public actor EventDispatcher: EventBus, EventObserving {
 
     /// Dispatches an event to its registered listeners.
     ///
-    /// Listeners run in priority order. The first error stops dispatch and is
-    /// rethrown.
+    /// Listeners run in priority order, then queued listeners are enqueued.
+    /// The first error stops dispatch and is rethrown.
     ///
     /// - Parameter event: The event to dispatch.
     /// - Throws: The first error thrown by a listener.
     public func dispatch<E: Event>(_ event: E) async throws {
-        // Run listeners and streams.
-        try await self.deliver(event)
+        // Run listeners, then enqueue queued listeners.
+        try await self.runListeners(event)
+        try await self.enqueuing?.enqueue(event)
 
-        // Notify observers after delivery.
+        // Feed streams and notify observers.
+        self.sendToStreams(event)
         await self.notifyDispatched(event)
     }
 
     /// Receives an event without notifying observers.
     ///
+    /// Queued listeners are skipped, because the publishing instance already
+    /// enqueued them.
+    ///
     /// - Parameter event: The event to receive.
     public func receive<E: Event>(_ event: E) async throws {
-        // Run listeners and streams.
-        try await self.deliver(event)
+        // Run listeners and feed streams; queued listeners stay local.
+        try await self.runListeners(event)
+        self.sendToStreams(event)
     }
 
     /// Observes registrations and dispatches with an observer.
@@ -170,8 +199,8 @@ public actor EventDispatcher: EventBus, EventObserving {
         return channel
     }
 
-    /// Runs listeners and streams for an event.
-    private func deliver<E: Event>(_ event: E) async throws {
+    /// Runs the listeners for an event.
+    private func runListeners<E: Event>(_ event: E) async throws {
         // Copy the registrations for this dispatch.
         let registrations = self.registrations[ObjectIdentifier(E.self)] ?? []
 
@@ -179,8 +208,11 @@ public actor EventDispatcher: EventBus, EventObserving {
         for registration in registrations {
             try await registration.handle(event)
         }
+    }
 
-        // Feed live streams after listeners.
+    /// Feeds an event to the live streams for its type.
+    private func sendToStreams<E: Event>(_ event: E) {
+        // Send to the event type's channel, if anyone subscribed to it.
         if let channel = self.channels[ObjectIdentifier(E.self)] as? Multicast<E> {
             channel.send(event)
         }
