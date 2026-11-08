@@ -1,4 +1,8 @@
 /// Handles one event type.
+///
+/// Listeners are registered with an ``EventBus``. They run in priority order
+/// and are `Sendable`, so they can be invoked from any thread. Dependencies
+/// should be injected through the initializer.
 public protocol EventListener: Sendable {
     /// The event this listener handles.
     associatedtype EventType: Event

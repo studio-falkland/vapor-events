@@ -1,5 +1,9 @@
-/// Dispatches events to listeners and streams.
-public protocol EventDispatching: Sendable {
+/// The application-wide bus for local event dispatch.
+///
+/// An event bus registers listeners and streams and dispatches events to them.
+/// It does not handle cross-instance transport; that is the job of a
+/// ``BroadcastRelay``.
+public protocol EventBus: Sendable {
     /// Registers a listener for its event type.
     ///
     /// - Parameter listener: The listener to register.
@@ -25,6 +29,10 @@ public protocol EventDispatching: Sendable {
 
     /// Creates a live stream of events.
     ///
+    /// Each call returns an independent stream with its own buffer, so register
+    /// one stream per consumer. Iterating the same stream from several tasks
+    /// splits the events between them instead of copying them.
+    ///
     /// - Parameters:
     ///   - eventType: The event type to stream.
     ///   - bufferingPolicy: How to buffer events for slow consumers.
@@ -32,16 +40,27 @@ public protocol EventDispatching: Sendable {
     func stream<E: Event>(
         _ eventType: E.Type,
         bufferingPolicy: AsyncStream<E>.Continuation.BufferingPolicy
-    ) async -> EventStream<E>
+    ) async -> AsyncStream<E>
 
-    /// Starts receiving broadcast events.
-    func start() async
-
-    /// Stops receiving broadcast events.
-    func shutdown() async
+    /// Receives an event without notifying observers.
+    ///
+    /// - Parameter event: The event to receive.
+    func receive<E: Event>(_ event: E) async throws
 }
 
-extension EventDispatching {
+/// Observes event type registrations and dispatches.
+///
+/// Observation is infrastructure for the broadcast relay. It is not part of the
+/// public bus because relays are not an extension point; transports are.
+package protocol EventObserving: Sendable {
+    /// Registers an observer.
+    ///
+    /// - Parameter observer: The observer to add.
+    /// - Returns: A cancellation that removes the observer.
+    func observe(_ observer: any DispatchObserver) -> Cancellation
+}
+
+extension EventBus {
     /// Registers a closure listener with the default priority.
     ///
     /// - Parameters:
@@ -56,9 +75,12 @@ extension EventDispatching {
 
     /// Creates a stream with the default buffering policy.
     ///
+    /// Each call returns an independent stream with its own buffer, so register
+    /// one stream per consumer.
+    ///
     /// - Parameter eventType: The event type to stream.
     /// - Returns: A cancellable stream of events.
-    public func stream<E: Event>(_ eventType: E.Type) async -> EventStream<E> {
+    public func stream<E: Event>(_ eventType: E.Type) async -> AsyncStream<E> {
         await self.stream(eventType, bufferingPolicy: .bufferingNewest(64))
     }
 }

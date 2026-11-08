@@ -3,7 +3,7 @@ import VaporEventsCore
 
 extension Application {
     /// The application's event dispatcher.
-    public var events: any EventDispatching {
+    public var events: any EventBus {
         get {
             // Guard first access with the application lock.
             self.locks.lock(for: EventDispatcherKey.self).withLock {
@@ -15,9 +15,6 @@ extension Application {
                 // Create and store the dispatcher.
                 let dispatcher = EventDispatcher()
                 self.storage[EventDispatcherKey.self] = dispatcher
-
-                // Start and stop the dispatcher with the application.
-                self.lifecycle.use(EventDispatcherLifecycle(dispatcher: dispatcher))
                 return dispatcher
             }
         }
@@ -30,18 +27,6 @@ extension Application {
     }
 
     private struct EventDispatcherKey: StorageKey, LockKey {
-        typealias Value = any EventDispatching
-    }
-}
-
-private struct EventDispatcherLifecycle: LifecycleHandler {
-    let dispatcher: any EventDispatching
-
-    func didBootAsync(_ application: Application) async throws {
-        await self.dispatcher.start()
-    }
-
-    func shutdownAsync(_ application: Application) async {
-        await self.dispatcher.shutdown()
+        typealias Value = any EventBus
     }
 }

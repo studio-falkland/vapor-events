@@ -55,19 +55,21 @@ private func waitUntil(
 struct BroadcastTests {
     @Test
     func remoteDispatcherReceivesBroadcast() async throws {
-        // Create a shared broadcaster and two dispatchers.
-        let broadcaster = InProcessBroadcaster()
-        let origin = EventDispatcher(broadcaster: broadcaster, instanceID: "origin")
-        let remote = EventDispatcher(broadcaster: broadcaster, instanceID: "remote")
-        await origin.start()
-        await remote.start()
+        // Create a shared driver and two dispatchers.
+        let driver = InProcessBroadcastDriver()
+        let originDispatcher = EventDispatcher()
+        let remoteDispatcher = EventDispatcher()
+        let origin = BroadcastRelay(driver: driver, dispatcher: originDispatcher, instanceID: "origin")
+        let remote = BroadcastRelay(driver: driver, dispatcher: remoteDispatcher, instanceID: "remote")
+        origin.start()
+        remote.start()
 
         // Register a counting listener on the remote dispatcher.
         let counter = BroadcastCounter()
-        await remote.listen(BroadcastCountingListener(counter: counter))
+        await remoteDispatcher.listen(BroadcastCountingListener(counter: counter))
 
         // Dispatch a broadcast event from the origin.
-        try await origin.dispatch(BroadcastEvent(id: UUID()))
+        try await originDispatcher.dispatch(BroadcastEvent(id: UUID()))
 
         // Wait for the remote listener.
         await waitUntil { await counter.count == 1 }
@@ -75,23 +77,24 @@ struct BroadcastTests {
         let count = await counter.count
         #expect(count == 1)
 
-        await origin.shutdown()
-        await remote.shutdown()
+        origin.shutdown()
+        remote.shutdown()
     }
 
     @Test
     func originDoesNotReceiveItsOwnBroadcast() async throws {
-        // Create a broadcaster and a dispatcher.
-        let broadcaster = InProcessBroadcaster()
-        let origin = EventDispatcher(broadcaster: broadcaster, instanceID: "origin")
-        await origin.start()
+        // Create a driver and a dispatcher.
+        let driver = InProcessBroadcastDriver()
+        let dispatcher = EventDispatcher()
+        let origin = BroadcastRelay(driver: driver, dispatcher: dispatcher, instanceID: "origin")
+        origin.start()
 
         // Register a counting listener.
         let counter = BroadcastCounter()
-        await origin.listen(BroadcastCountingListener(counter: counter))
+        await dispatcher.listen(BroadcastCountingListener(counter: counter))
 
         // Dispatch a broadcast event.
-        try await origin.dispatch(BroadcastEvent(id: UUID()))
+        try await dispatcher.dispatch(BroadcastEvent(id: UUID()))
 
         // Give the subscription a moment to process the echo.
         try await Task.sleep(for: .milliseconds(50))
@@ -100,24 +103,26 @@ struct BroadcastTests {
         let count = await counter.count
         #expect(count == 1)
 
-        await origin.shutdown()
+        origin.shutdown()
     }
 
     @Test
     func nonBroadcastEventIsNotPublished() async throws {
-        // Create a shared broadcaster and two dispatchers.
-        let broadcaster = InProcessBroadcaster()
-        let origin = EventDispatcher(broadcaster: broadcaster, instanceID: "origin")
-        let remote = EventDispatcher(broadcaster: broadcaster, instanceID: "remote")
-        await origin.start()
-        await remote.start()
+        // Create a shared driver and two dispatchers.
+        let driver = InProcessBroadcastDriver()
+        let originDispatcher = EventDispatcher()
+        let remoteDispatcher = EventDispatcher()
+        let origin = BroadcastRelay(driver: driver, dispatcher: originDispatcher, instanceID: "origin")
+        let remote = BroadcastRelay(driver: driver, dispatcher: remoteDispatcher, instanceID: "remote")
+        origin.start()
+        remote.start()
 
         // Register a listener on the remote dispatcher.
         let counter = BroadcastCounter()
-        await remote.listen(LocalCountingListener(counter: counter))
+        await remoteDispatcher.listen(LocalCountingListener(counter: counter))
 
         // Dispatch a local event from the origin.
-        try await origin.dispatch(LocalEvent(id: UUID()))
+        try await originDispatcher.dispatch(LocalEvent(id: UUID()))
 
         // Give the subscription a moment to process.
         try await Task.sleep(for: .milliseconds(50))
@@ -126,51 +131,55 @@ struct BroadcastTests {
         let count = await counter.count
         #expect(count == 0)
 
-        await origin.shutdown()
-        await remote.shutdown()
+        origin.shutdown()
+        remote.shutdown()
     }
 
     @Test
     func remoteStreamReceivesBroadcast() async throws {
-        // Create a shared broadcaster and two dispatchers.
-        let broadcaster = InProcessBroadcaster()
-        let origin = EventDispatcher(broadcaster: broadcaster, instanceID: "origin")
-        let remote = EventDispatcher(broadcaster: broadcaster, instanceID: "remote")
-        await origin.start()
-        await remote.start()
+        // Create a shared driver and two dispatchers.
+        let driver = InProcessBroadcastDriver()
+        let originDispatcher = EventDispatcher()
+        let remoteDispatcher = EventDispatcher()
+        let origin = BroadcastRelay(driver: driver, dispatcher: originDispatcher, instanceID: "origin")
+        let remote = BroadcastRelay(driver: driver, dispatcher: remoteDispatcher, instanceID: "remote")
+        origin.start()
+        remote.start()
 
         // Create a stream on the remote dispatcher.
-        let stream = await remote.stream(BroadcastEvent.self)
+        let stream = await remoteDispatcher.stream(BroadcastEvent.self)
 
         // Dispatch a broadcast event from the origin.
         let id = UUID()
-        try await origin.dispatch(BroadcastEvent(id: id))
+        try await originDispatcher.dispatch(BroadcastEvent(id: id))
 
         // Read the event from the remote stream.
         var iterator = stream.makeAsyncIterator()
         let event = await iterator.next()
         #expect(event?.id == id)
 
-        await origin.shutdown()
-        await remote.shutdown()
+        origin.shutdown()
+        remote.shutdown()
     }
 
     @Test
     func shutdownStopsReceiving() async throws {
-        // Create a shared broadcaster and two dispatchers.
-        let broadcaster = InProcessBroadcaster()
-        let origin = EventDispatcher(broadcaster: broadcaster, instanceID: "origin")
-        let remote = EventDispatcher(broadcaster: broadcaster, instanceID: "remote")
-        await origin.start()
-        await remote.start()
+        // Create a shared driver and two dispatchers.
+        let driver = InProcessBroadcastDriver()
+        let originDispatcher = EventDispatcher()
+        let remoteDispatcher = EventDispatcher()
+        let origin = BroadcastRelay(driver: driver, dispatcher: originDispatcher, instanceID: "origin")
+        let remote = BroadcastRelay(driver: driver, dispatcher: remoteDispatcher, instanceID: "remote")
+        origin.start()
+        remote.start()
 
         // Register a listener on the remote dispatcher.
         let counter = BroadcastCounter()
-        await remote.listen(BroadcastCountingListener(counter: counter))
+        await remoteDispatcher.listen(BroadcastCountingListener(counter: counter))
 
-        // Shut down the remote dispatcher and dispatch.
-        await remote.shutdown()
-        try await origin.dispatch(BroadcastEvent(id: UUID()))
+        // Shut down the remote system and dispatch.
+        remote.shutdown()
+        try await originDispatcher.dispatch(BroadcastEvent(id: UUID()))
 
         // Give the subscription a moment to process.
         try await Task.sleep(for: .milliseconds(50))
@@ -179,6 +188,6 @@ struct BroadcastTests {
         let count = await counter.count
         #expect(count == 0)
 
-        await origin.shutdown()
+        origin.shutdown()
     }
 }

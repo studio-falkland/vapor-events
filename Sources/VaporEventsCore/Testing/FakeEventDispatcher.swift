@@ -4,13 +4,17 @@ import FoundationEssentials
 import Foundation
 #endif
 
-/// Records dispatches instead of running listeners and streams.
-public actor FakeEventDispatcher: EventDispatching {
+/// A test double for ``EventBus``.
+///
+/// The fake records dispatched events instead of running listeners or streams.
+/// Use ``dispatched(_:)`` and the assertion helpers to inspect what was
+/// dispatched.
+public actor FakeEventDispatcher: EventBus, EventObserving {
     /// Events recorded in dispatch order.
     private var recorded: [any Event] = []
 
-    /// Registered listener names keyed by event name.
-    private var registrations: [String: [String]] = [:]
+    /// Registered listener names keyed by event type.
+    private var registrations: [ObjectIdentifier: [String]] = [:]
 
     /// Creates a fake dispatcher.
     public init() {}
@@ -19,12 +23,11 @@ public actor FakeEventDispatcher: EventDispatching {
     ///
     /// - Parameter listener: The listener to register.
     public func listen<L: EventListener>(_ listener: L) {
-        // Resolve the event name and listener identity.
-        let eventName = L.EventType.name
+        // Resolve the listener identity.
         let listenerName = String(reflecting: L.self)
 
         // Record the registration.
-        self.registrations[eventName, default: []].append(listenerName)
+        self.registrations[ObjectIdentifier(L.EventType.self), default: []].append(listenerName)
     }
 
     /// Registers a closure listener for an event type.
@@ -41,7 +44,7 @@ public actor FakeEventDispatcher: EventDispatching {
         // Record a unique closure listener name.
         let eventName = E.name
         let listenerName = "closure:\(eventName):\(UUID().uuidString)"
-        self.registrations[eventName, default: []].append(listenerName)
+        self.registrations[ObjectIdentifier(E.self), default: []].append(listenerName)
     }
 
     /// Records an event instead of dispatching it.
@@ -60,11 +63,11 @@ public actor FakeEventDispatcher: EventDispatching {
     public func stream<E: Event>(
         _ eventType: E.Type,
         bufferingPolicy: AsyncStream<E>.Continuation.BufferingPolicy
-    ) -> EventStream<E> {
+    ) -> AsyncStream<E> {
         // Create and immediately finish the stream.
         let (stream, continuation) = AsyncStream<E>.makeStream(bufferingPolicy: bufferingPolicy)
         continuation.finish()
-        return EventStream(stream: stream) {}
+        return stream
     }
 
     /// Returns the recorded events of a type.
@@ -106,19 +109,24 @@ public actor FakeEventDispatcher: EventDispatching {
     /// - Parameter listener: The listener type to check.
     /// - Throws: ``EventAssertionError/listenerNotRegistered(_:)`` when it is not registered.
     public func assertListening<L: EventListener>(_ listener: L.Type) throws {
-        let eventName = L.EventType.name
         let listenerName = String(reflecting: L.self)
-        let registered = (self.registrations[eventName] ?? []).contains { $0 == listenerName }
+        let registered = (self.registrations[ObjectIdentifier(L.EventType.self)] ?? []).contains { $0 == listenerName }
         guard registered else {
             throw EventAssertionError.listenerNotRegistered(listenerName)
         }
     }
 
     /// Does nothing.
-    public func start() {}
+    nonisolated package func observe(_ observer: any DispatchObserver) -> Cancellation {
+        Cancellation {}
+    }
 
-    /// Does nothing.
-    public func shutdown() {}
+    /// Records an event without notifying observers.
+    ///
+    /// - Parameter event: The event to record.
+    public func receive<E: Event>(_ event: E) async throws {
+        self.recorded.append(event)
+    }
 
     /// Clears recorded events and registrations.
     public func reset() {
