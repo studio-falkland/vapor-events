@@ -114,7 +114,7 @@ struct EventStreamingTests {
     }
 
     @Test
-    func streamsAreNotFedWhenListenerThrows() async throws {
+    func streamsAreFedWhenListenerThrows() async throws {
         // Create a dispatcher and a stream.
         let dispatcher = EventDispatcher()
         let stream = await dispatcher.stream(OrderShipped.self)
@@ -123,12 +123,33 @@ struct EventStreamingTests {
         await dispatcher.listen(ThrowingListener())
 
         // Dispatch and expect the error.
+        let id = UUID()
         await #expect(throws: TestError.self) {
-            try await dispatcher.dispatch(OrderShipped(orderID: UUID()))
+            try await dispatcher.dispatch(OrderShipped(orderID: id))
         }
 
-        // Verify the stream did not receive the event.
+        // Verify the stream received the event before the error was rethrown.
         let event = await nextWithTimeout(stream)
-        #expect(event == nil)
+        #expect(event?.orderID == id)
+    }
+
+    @Test
+    func receiveFeedsStreamsWhenListenerThrows() async throws {
+        // Create a dispatcher and a stream.
+        let dispatcher = EventDispatcher()
+        let stream = await dispatcher.stream(OrderShipped.self)
+
+        // Register a throwing listener.
+        await dispatcher.listen(ThrowingListener())
+
+        // Receive and expect the error.
+        let id = UUID()
+        await #expect(throws: TestError.self) {
+            try await dispatcher.receive(OrderShipped(orderID: id))
+        }
+
+        // Verify the stream received the event before the error was rethrown.
+        let event = await nextWithTimeout(stream)
+        #expect(event?.orderID == id)
     }
 }

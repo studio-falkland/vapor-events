@@ -26,8 +26,11 @@ public protocol EventBus: Sendable {
 
     /// Dispatches an event to its registered listeners.
     ///
+    /// The first listener error stops listener execution, but queued listeners,
+    /// streams, and observers are still notified before the error is rethrown.
+    ///
     /// - Parameter event: The event to dispatch.
-    /// - Throws: The first error thrown by a listener.
+    /// - Throws: The first error thrown by a listener or the enqueuing.
     func dispatch<E: Event>(_ event: E) async throws
 
     /// Creates a live stream of events.
@@ -48,7 +51,8 @@ public protocol EventBus: Sendable {
     /// Receives an event without notifying observers.
     ///
     /// Queued listeners are skipped, because the publishing instance already
-    /// enqueued them.
+    /// enqueued them. The first listener error stops listener execution, but
+    /// streams are still fed before the error is rethrown.
     ///
     /// - Parameter event: The event to receive.
     func receive<E: Event>(_ event: E) async throws

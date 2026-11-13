@@ -178,34 +178,62 @@ public actor EventDispatcher: EventBus, EventObserving {
     /// Dispatches an event to its registered listeners.
     ///
     /// Listeners run in priority order, then queued listeners are enqueued.
-    /// The first error stops dispatch and is rethrown.
+    /// The first error stops listener execution, but queued listeners, streams,
+    /// and observers are still notified before the error is rethrown.
     ///
     /// - Parameter event: The event to dispatch.
-    /// - Throws: The first error thrown by a listener.
+    /// - Throws: The first error thrown by a listener or the enqueuing.
     public func dispatch<E: Event>(_ event: E) async throws {
         self.logger.debug("Dispatching event", metadata: ["event": .string(E.name)])
 
-        // Run listeners, then enqueue queued listeners.
-        try await self.runListeners(event)
-        try await self.enqueuing?.enqueue(event)
+        // Run listeners and keep the first error.
+        var firstError: (any Error)?
+        do {
+            try await self.runListeners(event)
+        } catch {
+            firstError = error
+        }
 
-        // Feed streams and notify observers.
+        // Enqueue queued listeners, preserving the first error.
+        do {
+            try await self.enqueuing?.enqueue(event)
+        } catch {
+            firstError = firstError ?? error
+        }
+
+        // Always feed streams and notify observers.
         self.sendToStreams(event)
         await self.notifyDispatched(event)
+
+        // Rethrow after delivery.
+        if let firstError {
+            throw firstError
+        }
     }
 
     /// Receives an event without notifying observers.
     ///
     /// Queued listeners are skipped, because the publishing instance already
-    /// enqueued them.
+    /// enqueued them. The first error stops listener execution, but streams
+    /// are still fed before the error is rethrown.
     ///
     /// - Parameter event: The event to receive.
     public func receive<E: Event>(_ event: E) async throws {
         self.logger.trace("Receiving event", metadata: ["event": .string(E.name)])
 
-        // Run listeners and feed streams; queued listeners stay local.
-        try await self.runListeners(event)
+        // Run listeners and keep the first error.
+        var firstError: (any Error)?
+        do {
+            try await self.runListeners(event)
+        } catch {
+            firstError = error
+        }
+
+        // Always feed streams, then rethrow after delivery.
         self.sendToStreams(event)
+        if let firstError {
+            throw firstError
+        }
     }
 
     /// Observes registrations and dispatches with an observer.

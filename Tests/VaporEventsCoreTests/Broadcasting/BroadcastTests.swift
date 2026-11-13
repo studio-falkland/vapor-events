@@ -30,6 +30,12 @@ private struct BroadcastCountingListener: EventListener {
     }
 }
 
+private struct ThrowingBroadcastListener: EventListener {
+    func handle(_ event: BroadcastEvent) async throws {
+        throw TestError.failed
+    }
+}
+
 private struct LocalCountingListener: EventListener {
     let counter: BroadcastCounter
 
@@ -124,6 +130,33 @@ struct BroadcastTests {
 
         let count = await counter.count
         #expect(count == 1)
+
+        origin.shutdown()
+        remote.shutdown()
+    }
+
+    @Test
+    func broadcastStillPublishedWhenListenerThrows() async throws {
+        // Create a shared driver and two dispatchers.
+        let broadcaster = Broadcaster()
+        let originDispatcher = EventDispatcher()
+        let remoteDispatcher = EventDispatcher()
+        let origin = BroadcastRelay(broadcaster: broadcaster, dispatcher: originDispatcher, instanceID: "origin")
+        let remote = BroadcastRelay(broadcaster: broadcaster, dispatcher: remoteDispatcher, instanceID: "remote")
+        origin.start()
+        remote.start()
+
+        // Register a throwing listener on the origin and a counter on the remote.
+        await originDispatcher.listen(ThrowingBroadcastListener())
+        let counter = BroadcastCounter()
+        await remoteDispatcher.listen(BroadcastCountingListener(counter: counter))
+
+        // Dispatch, expect the error, and verify the broadcast still arrived.
+        await #expect(throws: TestError.self) {
+            try await originDispatcher.dispatch(BroadcastEvent(id: UUID()))
+        }
+        await waitUntil { await counter.count == 1 }
+        #expect(await counter.count == 1)
 
         origin.shutdown()
         remote.shutdown()

@@ -58,6 +58,24 @@ struct QueuedListenerTests {
     }
 
     @Test
+    func dispatchStillEnqueuesWhenListenerThrows() async throws {
+        // Create a dispatcher with a test enqueuing.
+        let recorder = QueuedRecorder()
+        let dispatcher = EventDispatcher(enqueuing: TestEnqueuing(recorder: recorder))
+        await dispatcher.listen(ThrowingListener())
+        await dispatcher.listen(QueuedListener(recorder: recorder))
+
+        // Dispatch, expect the error, and verify the listener was still enqueued.
+        let id = UUID()
+        await #expect(throws: TestError.self) {
+            try await dispatcher.dispatch(OrderShipped(orderID: id))
+        }
+
+        let enqueued = await recorder.enqueued
+        #expect(enqueued == [id])
+    }
+
+    @Test
     func receiveSkipsQueuedListeners() async throws {
         // Create a dispatcher with a test enqueuing.
         let recorder = QueuedRecorder()
