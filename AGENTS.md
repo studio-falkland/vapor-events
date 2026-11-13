@@ -18,8 +18,7 @@ broadcast, optional queued listeners.
 - `ShouldQueue` on the listener routes it to a queue instead of running inline.
   The Vapor adapter registers it with `app.queues` through `QueueEnqueuing` and
   runs it as a `ListenerJob`. The dispatcher never sees queued listeners, and
-  `receive` skips them so remote instances do not enqueue twice.
-- `ShouldQueue` wins over broadcast fan-out for that listener.
+  `receive` skips them so the job is enqueued once per dispatch.
 - Transports: `InProcess`, Postgres `LISTEN`/`NOTIFY`, and Valkey pub/sub.
   Valkey speaks RESP3, so Redis 6+ works too.
 - Postgres uses one shared `LISTEN`/`NOTIFY` channel and routes messages by
