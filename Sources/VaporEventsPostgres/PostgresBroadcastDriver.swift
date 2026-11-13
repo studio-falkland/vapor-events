@@ -20,6 +20,9 @@ public final class PostgresBroadcastDriver: BroadcastDriver {
     /// The longest delay between reconnects.
     private static let maxReconnectDelay = Duration.seconds(30)
 
+    /// The delay before reconnecting after the listener ends cleanly.
+    private static let resubscribeDelay = Duration.seconds(1)
+
     /// A transport message carrying the event type name.
     private struct BroadcastMessage<E: Event>: Codable, Sendable {
         let eventName: String
@@ -202,8 +205,10 @@ public final class PostgresBroadcastDriver: BroadcastDriver {
                         }
                     }
 
-                    // Reset the backoff after the connection closes cleanly.
+                    // Reset the backoff and pause before reconnecting, so a
+                    // cleanly closed connection does not spin the loop.
                     delay = .seconds(1)
+                    try? await Task.sleep(for: Self.resubscribeDelay)
                 } catch {
                     if Task.isCancelled { break }
 
