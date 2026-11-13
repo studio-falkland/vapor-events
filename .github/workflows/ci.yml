@@ -15,10 +15,8 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
 
-      - name: Select Xcode
-        run: |
-          sudo xcode-select -s /Applications/Xcode_27.2.app
-          swift --version
+      - name: Show Swift version
+        run: swift --version
 
       - name: Test
         run: swift test --configuration debug 2>&1
