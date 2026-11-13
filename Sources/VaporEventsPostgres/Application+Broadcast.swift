@@ -6,21 +6,20 @@ extension BroadcastDriverFactory {
     /// A driver backed by an existing Postgres client.
     ///
     /// The application owns the client: it must run the client and stop it. The
-    /// client's pool must accommodate one connection per broadcast event type,
-    /// because each subscription holds a `LISTEN` connection.
+    /// driver holds one `LISTEN` connection for its lifetime.
     ///
     /// - Parameters:
     ///   - client: The client to publish and listen with.
-    ///   - channelPrefix: The prefix used to build per-event channel names.
+    ///   - channel: The `LISTEN`/`NOTIFY` channel used for every event type.
     /// - Returns: A factory for the Postgres driver.
     public static func postgres(
         client: PostgresClient,
-        channelPrefix: String = "vapor_events"
+        channel: String = "vapor_events"
     ) -> Self {
         Self { application in
             PostgresBroadcastDriver(
                 client: client,
-                channelPrefix: channelPrefix,
+                channel: channel,
                 logger: application.logger
             )
         }
@@ -33,11 +32,11 @@ extension BroadcastDriverFactory {
     ///
     /// - Parameters:
     ///   - configuration: The Postgres client configuration.
-    ///   - channelPrefix: The prefix used to build per-event channel names.
+    ///   - channel: The `LISTEN`/`NOTIFY` channel used for every event type.
     /// - Returns: A factory for the Postgres driver.
     public static func postgres(
         configuration: PostgresClient.Configuration,
-        channelPrefix: String = "vapor_events"
+        channel: String = "vapor_events"
     ) -> Self {
         Self { application in
             // Create the client and start it immediately, so subscriptions made
@@ -48,7 +47,7 @@ extension BroadcastDriverFactory {
             )
             let driver = PostgresBroadcastDriver(
                 client: client,
-                channelPrefix: channelPrefix,
+                channel: channel,
                 logger: application.logger
             )
 

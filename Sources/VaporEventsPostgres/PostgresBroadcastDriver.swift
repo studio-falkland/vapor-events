@@ -10,9 +10,9 @@ import VaporEventsCore
 
 /// A ``BroadcastDriver`` backed by Postgres `LISTEN`/`NOTIFY`.
 ///
-/// Each event type uses its own channel. Publishing sends `pg_notify`;
-/// subscribing opens a dedicated `LISTEN` connection with a reconnect loop.
-/// Payloads are JSON and capped at 8 KB.
+/// The driver uses one channel and one `LISTEN` connection for every event
+/// type. Messages carry the event type name, so the driver can route them to
+/// the matching subscribers. Payloads are JSON and capped at 8 KB.
 public final class PostgresBroadcastDriver: BroadcastDriver {
     /// The maximum notification payload size.
     private static let maxPayloadSize = 8_000
@@ -20,40 +20,63 @@ public final class PostgresBroadcastDriver: BroadcastDriver {
     /// The longest delay between reconnects.
     private static let maxReconnectDelay = Duration.seconds(30)
 
-    /// A subscriber channel and the task listening for it.
+    /// A transport message carrying the event type name.
+    private struct BroadcastMessage<E: Event>: Codable, Sendable {
+        let eventName: String
+        let envelope: EventEnvelope<E>
+    }
+
+    /// The header used to route a message to its event type.
+    private struct BroadcastHeader: Codable, Sendable {
+        let eventName: String
+    }
+
+    /// A subscriber channel and the closure that delivers to it.
     private struct Registration: Sendable {
         /// The channel fed by the listener.
         let channel: any AnyMulticast
 
-        /// The listener task.
-        let task: Task<Void, Never>
+        /// Decodes a message and delivers its envelope to the channel.
+        let send: @Sendable (Data) -> Void
+    }
+
+    /// The state shared by concurrent calls.
+    private struct State: Sendable {
+        /// Registrations keyed by event name.
+        var registrations: [String: Registration] = [:]
+
+        /// The listener task, when running.
+        var listener: Task<Void, Never>?
+
+        /// Whether ``shutdown()`` has run.
+        var isShuttingDown = false
     }
 
     /// The client used for publishing and listening.
     private let client: PostgresClient
 
-    /// The channel prefix.
-    private let channelPrefix: String
+    /// The single `LISTEN`/`NOTIFY` channel.
+    private let channel: String
 
     /// The logger used for transport failures.
     private let logger: Logger
 
-    /// Registrations keyed by event type.
-    private let registrations = Mutex<[ObjectIdentifier: Registration]>([:])
+    /// The shared state.
+    private let state = Mutex(State())
 
     /// Creates a Postgres broadcaster.
     ///
     /// - Parameters:
     ///   - client: The client used for publishing and listening.
-    ///   - channelPrefix: The prefix used to build per-event channel names.
+    ///   - channel: The `LISTEN`/`NOTIFY` channel used for every event type.
     ///   - logger: The logger used for transport failures.
     public init(
         client: PostgresClient,
-        channelPrefix: String = "vapor_events",
+        channel: String = "vapor_events",
         logger: Logger = Logger(label: "vapor-events.postgres")
     ) {
         self.client = client
-        self.channelPrefix = channelPrefix
+        self.channel = Self.channelName(channel)
         self.logger = logger
     }
 
@@ -61,16 +84,17 @@ public final class PostgresBroadcastDriver: BroadcastDriver {
     ///
     /// - Parameter envelope: The envelope to publish.
     public func publish<E: Event>(_ envelope: EventEnvelope<E>) async throws {
-        // Encode the envelope and enforce the payload limit.
-        let payload = try JSONEncoder().encode(envelope)
+        // Wrap the envelope with the event name so listeners can route it.
+        let message = BroadcastMessage(eventName: E.name, envelope: envelope)
+        let payload = try JSONEncoder().encode(message)
         guard payload.count <= Self.maxPayloadSize else {
             throw EventTransportError.payloadTooLarge(payload.count)
         }
 
-        // Send the notification on the event's channel.
+        // Send the notification on the driver's single channel.
         let text = String(decoding: payload, as: UTF8.self)
         try await self.client.query(
-            "SELECT pg_notify(\(self.channelName(for: E.name)), \(text))"
+            "SELECT pg_notify(\(self.channel), \(text))"
         )
     }
 
@@ -79,65 +103,86 @@ public final class PostgresBroadcastDriver: BroadcastDriver {
     /// - Parameter type: The event type to subscribe to.
     /// - Returns: A cancellable subscription.
     public func subscribe<E: Event>(to type: E.Type) async -> EventSubscription<E> {
-        // Reuse or create the channel and its listener for the event type.
-        let channel = self.multicast(for: E.self)
+        // Register the event type, starting the listener when needed.
+        guard let channel = self.multicast(for: E.self) else {
+            // Shut down: return a stream that is already finished.
+            let (stream, continuation) = AsyncStream<EventEnvelope<E>>.makeStream()
+            continuation.finish()
+            return EventSubscription(stream: stream, cancel: {})
+        }
 
         // Hand out a subscriber stream.
         let subscription = channel.subscribe(bufferingPolicy: .bufferingNewest(64))
         return EventSubscription(stream: subscription.stream, cancellation: subscription.cancellation)
     }
 
-    /// Cancels every subscription.
+    /// Stops listening and cancels every subscription.
     public func shutdown() async {
-        // Take the registrations, then cancel them outside the lock.
-        let all = self.registrations.withLock { state in
-            defer { state.removeAll() }
-            return Array(state.values)
+        // Mark shutdown, take the listener, and take the registrations.
+        let (listener, registrations) = self.state.withLock { state -> (Task<Void, Never>?, [Registration]) in
+            state.isShuttingDown = true
+            defer {
+                state.listener = nil
+                state.registrations.removeAll()
+            }
+            return (state.listener, Array(state.registrations.values))
         }
-        for registration in all {
-            registration.task.cancel()
+
+        // Cancel the listener and finish the subscriber channels outside the lock.
+        listener?.cancel()
+        for registration in registrations {
             registration.channel.finish()
         }
     }
 
-    /// Returns the channel for an event type, creating it and its listener when needed.
-    private func multicast<E: Event>(for type: E.Type) -> Multicast<EventEnvelope<E>> {
-        let key = ObjectIdentifier(E.self)
-        return self.registrations.withLock { state in
-            // Reuse the existing channel for the type.
-            if let existing = state[key]?.channel as? Multicast<EventEnvelope<E>> {
+    /// Returns the channel for an event type, registering it when needed.
+    ///
+    /// - Parameter type: The event type.
+    /// - Returns: The channel, or `nil` when the driver is shut down.
+    private func multicast<E: Event>(for type: E.Type) -> Multicast<EventEnvelope<E>>? {
+        let key = E.name
+        return self.state.withLock { state in
+            guard !state.isShuttingDown else { return nil }
+
+            // Reuse the existing channel for the event type.
+            if let existing = state.registrations[key]?.channel as? Multicast<EventEnvelope<E>> {
                 return existing
             }
 
-            // Create the channel and start listening on the event's channel name.
+            // Create the channel and its registration.
             let channel = Multicast<EventEnvelope<E>>()
-            let task = self.listen(on: self.channelName(for: E.name), deliveringTo: channel)
-            state[key] = Registration(channel: channel, task: task)
+            state.registrations[key] = Registration(
+                channel: channel,
+                send: { data in
+                    guard let message = try? JSONDecoder().decode(BroadcastMessage<E>.self, from: data) else {
+                        return
+                    }
+                    channel.send(message.envelope)
+                }
+            )
+
+            // Start the shared listener when the first event type is registered.
+            if state.listener == nil {
+                state.listener = self.listen()
+            }
+
             return channel
         }
     }
 
-    /// Listens for notifications on a channel, reconnecting after failures.
-    private func listen<E: Event>(
-        on channelName: String,
-        deliveringTo channel: Multicast<EventEnvelope<E>>
-    ) -> Task<Void, Never> {
+    /// Listens for notifications on the single channel, reconnecting after failures.
+    private func listen() -> Task<Void, Never> {
         let client = self.client
+        let channelName = self.channel
         let logger = self.logger
-        return Task {
+        return Task { [weak self] in
             var delay = Duration.seconds(1)
             while !Task.isCancelled {
                 do {
                     try await client.withConnection { connection in
                         try await connection.listen(on: channelName) { notifications in
                             for try await notification in notifications {
-                                // Skip payloads that are not valid envelopes.
-                                let data = Data(notification.payload.utf8)
-                                guard let envelope = try? JSONDecoder().decode(EventEnvelope<E>.self, from: data) else {
-                                    logger.warning("Skipping a payload on \(channelName) that is not a valid envelope.")
-                                    continue
-                                }
-                                channel.send(envelope)
+                                self?.route(Data(notification.payload.utf8))
                             }
                         }
                     }
@@ -153,19 +198,51 @@ public final class PostgresBroadcastDriver: BroadcastDriver {
                     delay = min(delay * 2, Self.maxReconnectDelay)
                 }
             }
-            channel.finish()
+            self?.finishAll()
         }
     }
 
-    /// Builds a channel name for an event type.
-    private func channelName(for eventName: String) -> String {
-        // Sanitize the event name into a valid identifier.
-        let sanitized = eventName.lowercased().map { character in
+    /// Routes a received payload to its event type's subscribers.
+    ///
+    /// - Parameter data: The raw notification payload.
+    private func route(_ data: Data) {
+        // Decode the header to learn the event type.
+        guard let header = try? JSONDecoder().decode(BroadcastHeader.self, from: data) else {
+            self.logger.warning("Skipping a payload that is not a valid broadcast message.")
+            return
+        }
+
+        // Look up the registration and deliver the payload.
+        let registration = self.state.withLock { $0.registrations[header.eventName] }
+        guard let registration else {
+            self.logger.debug("Skipping a payload for an unregistered event type: \(header.eventName)")
+            return
+        }
+        registration.send(data)
+    }
+
+    /// Finishes every subscriber channel.
+    private func finishAll() {
+        let registrations = self.state.withLock { state -> [Registration] in
+            defer { state.registrations.removeAll() }
+            return Array(state.registrations.values)
+        }
+        for registration in registrations {
+            registration.channel.finish()
+        }
+    }
+
+    /// Sanitizes the channel name and keeps it within Postgres's 63-byte limit.
+    ///
+    /// - Parameter name: The requested channel name.
+    /// - Returns: A valid `LISTEN`/`NOTIFY` channel name.
+    private static func channelName(_ name: String) -> String {
+        // Sanitize the name into a valid identifier.
+        let sanitized = name.lowercased().map { character in
             character.isLetter || character.isNumber ? character : "_"
         }
-        let suffix = String(sanitized.suffix(48))
 
         // Keep the channel name within Postgres's 63-byte limit.
-        return String("\(self.channelPrefix)_\(suffix)".prefix(63))
+        return String(sanitized.prefix(63))
     }
 }
