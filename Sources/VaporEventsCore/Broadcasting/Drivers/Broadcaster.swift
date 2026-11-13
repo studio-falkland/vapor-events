@@ -12,9 +12,6 @@ package final class Broadcaster: Sendable {
     private struct State: Sendable {
         /// Drivers keyed by connection.
         var drivers: [BroadcastConnection: any BroadcastDriver]
-
-        /// Drivers pinned to event types.
-        var resolved: [ObjectIdentifier: any BroadcastDriver] = [:]
     }
 
     /// The broadcaster state.
@@ -101,10 +98,7 @@ package final class Broadcaster: Sendable {
     package func shutdown() async {
         // Take the drivers and reset the state.
         let drivers = self.state.withLock { state -> [any BroadcastDriver] in
-            defer {
-                state.drivers.removeAll()
-                state.resolved.removeAll()
-            }
+            defer { state.drivers.removeAll() }
             return Array(state.drivers.values)
         }
 
@@ -122,18 +116,15 @@ package final class Broadcaster: Sendable {
         }
     }
 
-    /// Returns the driver for an event type, pinning it on first use.
+    /// Returns the driver for an event type.
+    ///
+    /// The connection is resolved on every call, so a driver registered after
+    /// an event type was first used still takes effect.
     ///
     /// - Parameter type: The event type.
     /// - Returns: The driver for the event type's connection.
     private func driver<E: Event>(for type: E.Type) -> any BroadcastDriver {
         self.state.withLock { state in
-            // Reuse the pinned driver.
-            let key = ObjectIdentifier(E.self)
-            if let pinned = state.resolved[key] {
-                return pinned
-            }
-
             // Resolve the event's connection, falling back to the default.
             let connection = (E.self as? any ShouldBroadcast.Type)?.broadcastConnection ?? .default
             guard let driver = state.drivers[connection] else {
@@ -143,9 +134,6 @@ package final class Broadcaster: Sendable {
                 "Resolved broadcast connection",
                 metadata: ["event": .string(E.name), "connection": .string(connection.rawValue)]
             )
-
-            // Pin the driver for this event type.
-            state.resolved[key] = driver
             return driver
         }
     }

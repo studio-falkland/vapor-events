@@ -366,4 +366,24 @@ struct BroadcastTests {
         origin.shutdown()
         remote.shutdown()
     }
+
+    @Test
+    func resolvesDriverOnEveryPublish() async throws {
+        // Create a broadcaster with two spies.
+        let broadcaster = Broadcaster()
+        let first = SpyDriver()
+        let second = SpyDriver()
+        broadcaster.use(first)
+
+        // Publish once with the first driver.
+        try await broadcaster.publish(EventEnvelope(event: BroadcastEvent(id: UUID()), origin: "origin"))
+        #expect(await first.publishCount == 1)
+        #expect(await second.publishCount == 0)
+
+        // Switch the default and publish again.
+        broadcaster.use(second)
+        try await broadcaster.publish(EventEnvelope(event: BroadcastEvent(id: UUID()), origin: "origin"))
+        #expect(await first.publishCount == 1)
+        #expect(await second.publishCount == 1)
+    }
 }
