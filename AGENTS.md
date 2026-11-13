@@ -5,13 +5,10 @@
 An event system for Vapor: local dispatch by default, optional cross-instance
 broadcast, optional queued listeners.
 
-## Status
-
-See [`ROADMAP.md`](ROADMAP.md) for what is done, what remains, and how to
-implement it.
-
 ## Architecture
 
+- Products: `VaporEvents` (core re-export, Vapor adapter, queued listeners),
+  `VaporEventsPostgres`, and `VaporEventsValkey`.
 - `VaporEventsCore` does not import Vapor.
 - `VaporEvents` is the Vapor 4 adapter and re-exports the core.
 - `Event` is a `Codable`, `Sendable` value type. `EventListener` handles one event type.
@@ -19,9 +16,14 @@ implement it.
   implementation; `FakeEventDispatcher` and assertions live in `Testing/`.
 - `ShouldBroadcast` on the event publishes to a `BroadcastDriver`.
 - `ShouldQueue` on the listener routes it to a queue instead of running inline.
+  The Vapor adapter registers it with `app.queues` through `QueueEnqueuing` and
+  runs it as a `ListenerJob`. The dispatcher never sees queued listeners, and
+  `receive` skips them so remote instances do not enqueue twice.
 - `ShouldQueue` wins over broadcast fan-out for that listener.
-- Transports: `InProcess`, Postgres `LISTEN`/`NOTIFY`, Redis pub/sub.
-- One channel per event type.
+- Transports: `InProcess`, Postgres `LISTEN`/`NOTIFY`, and Valkey pub/sub.
+  Valkey speaks RESP3, so Redis 6+ works too.
+- Postgres uses one shared `LISTEN`/`NOTIFY` channel and routes messages by
+  event name. Valkey and the in-process driver use one channel per event type.
 - `main` targets Vapor 4. A `vapor5` branch will target Vapor 5 (explicit DI,
   `Service`, streaming API).
 
@@ -32,8 +34,8 @@ implement it.
 2. **Prefer built-in tools.** Use `read_file`, `grep`, `find_path`, `edit_file`,
    and `diagnostics` over shell commands.
 3. **Reuse, don't reinvent.** Before writing a helper, check whether Vapor,
-   Fluent, Queues, PostgresNIO, Redis, or the standard library already provides
-   it.
+   Fluent, Queues, PostgresNIO, Valkey/Redis, or the standard library already
+   provides it.
 4. **Plan, then wait.** Write an implementation plan and get an explicit
    go-ahead before writing code. Never implement without confirmation.
 5. **Comment in blocks.** Group inline code into blocks of 2–5 lines and put a

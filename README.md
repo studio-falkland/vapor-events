@@ -22,7 +22,7 @@ Add the package to your Vapor project's `Package.swift`:
 ```swift
 dependencies: [
     .package(url: "https://github.com/vapor/vapor.git", from: "4.122.3"),
-    .package(url: "https://github.com/studio-falkland/vapor-events", from: "0.1.0"),
+    .package(url: "https://github.com/studio-falkland/vapor-events", from: "1.0.0"),
 ],
 targets: [
     .target(name: "App", dependencies: [
@@ -107,8 +107,9 @@ app.broadcast.use(.valkey(client: client))
 ```
 
 The Postgres factory creates and runs its own client for the application's
-lifetime. The Valkey factory uses a client you own and run yourself. Both
-drivers use one channel per event type.
+lifetime. The Valkey factory uses a client you own and run yourself. Postgres
+uses a single `LISTEN`/`NOTIFY` channel for all event types, while Valkey uses
+one channel per event type.
 
 ## Queued listeners
 
