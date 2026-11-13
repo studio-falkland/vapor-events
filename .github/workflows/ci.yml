@@ -9,16 +9,16 @@ on:
 jobs:
   build-macos:
     name: Build (macOS)
-    runs-on: macos-15
+    runs-on: macos-26
 
     steps:
       - name: Checkout
         uses: actions/checkout@v6
 
-      - name: Set up Swift
-        uses: swift-actions/setup-swift@v2
-        with:
-          swift-version: "6.4"
+      - name: Select Xcode
+        run: |
+          sudo xcode-select -s /Applications/Xcode_27.2.app
+          swift --version
 
       - name: Build
         run: swift build --build-tests --configuration debug 2>&1
@@ -26,7 +26,7 @@ jobs:
   build-and-test:
     name: Build & Test
     runs-on: ubuntu-latest
-    container: swift:6.4
+    container: swift:6.4.2
     timeout-minutes: 30
 
     services:
