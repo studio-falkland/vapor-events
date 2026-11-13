@@ -37,8 +37,8 @@ package final class BroadcastRelay: DispatchObserver, Sendable {
         var isStarted = false
     }
 
-    /// The driver used for publishing and receiving.
-    private let driver: any BroadcastDriver
+    /// The broadcaster used for publishing and receiving.
+    private let broadcaster: Broadcaster
 
     /// The dispatcher fed by received envelopes.
     private let dispatcher: any EventBus & EventObserving
@@ -55,17 +55,17 @@ package final class BroadcastRelay: DispatchObserver, Sendable {
     /// Creates a broadcast relay.
     ///
     /// - Parameters:
-    ///   - driver: The driver used for publishing and receiving.
+    ///   - broadcaster: The broadcaster used for publishing and receiving.
     ///   - dispatcher: The dispatcher fed by received envelopes.
     ///   - instanceID: The identifier used to suppress echoes.
     ///   - logger: The logger used for transport failures.
     package init(
-        driver: any BroadcastDriver,
+        broadcaster: Broadcaster,
         dispatcher: any EventBus & EventObserving,
         instanceID: String = UUID().uuidString,
         logger: Logger = Logger(label: "vapor-events")
     ) {
-        self.driver = driver
+        self.broadcaster = broadcaster
         self.dispatcher = dispatcher
         self.instanceID = instanceID
         self.logger = logger
@@ -137,7 +137,7 @@ package final class BroadcastRelay: DispatchObserver, Sendable {
         guard shouldSubscribe else { return }
 
         // Subscribe and receive envelopes.
-        let subscription = await self.driver.subscribe(to: E.self)
+        let subscription = await self.broadcaster.subscribe(to: E.self)
         let instanceID = self.instanceID
         let logger = self.logger
         let task = Task { [weak self] in
@@ -182,7 +182,7 @@ package final class BroadcastRelay: DispatchObserver, Sendable {
         // Build and publish the envelope.
         let envelope = EventEnvelope(event: event, origin: self.instanceID)
         do {
-            try await self.driver.publish(envelope)
+            try await self.broadcaster.publish(envelope)
         } catch {
             self.logger.warning("Failed to publish broadcast event \(E.name): \(error)")
         }

@@ -46,24 +46,31 @@ extension BroadcastDriverFactory {
                 configuration: configuration,
                 backgroundLogger: application.logger
             )
-            application.lifecycle.use(PostgresClientLifecycle(client: client))
-
-            // Return a driver that shares the client.
-            return PostgresBroadcastDriver(
+            let driver = PostgresBroadcastDriver(
                 client: client,
                 channelPrefix: channelPrefix,
                 logger: application.logger
             )
+
+            // Stop the driver before the client it depends on.
+            application.lifecycle.use(PostgresClientLifecycle(client: client, driver: driver))
+
+            return driver
         }
     }
 }
 
 /// Stops a Postgres client with the application lifecycle.
 private final class PostgresClientLifecycle: LifecycleHandler {
+    /// The driver using the client.
+    private let driver: PostgresBroadcastDriver
+
     /// The task running the client.
     private let task: Task<Void, Never>
 
-    init(client: PostgresClient) {
+    init(client: PostgresClient, driver: PostgresBroadcastDriver) {
+        self.driver = driver
+
         // Start the client; its task ends when the application shuts down.
         self.task = Task {
             await client.run()
@@ -71,7 +78,15 @@ private final class PostgresClientLifecycle: LifecycleHandler {
     }
 
     func shutdownAsync(_ application: Application) async {
+        // Stop the driver before the client it depends on.
+        await self.driver.shutdown()
+
         // Stop the client.
         self.task.cancel()
     }
+}
+
+extension BroadcastConnection {
+    /// The Postgres `LISTEN`/`NOTIFY` connection.
+    public static let postgres = Self(rawValue: "postgres")
 }

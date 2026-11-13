@@ -6,7 +6,7 @@ extension Application {
     public var events: any EventBus {
         get {
             // Guard first access with the application lock.
-            self.locks.lock(for: EventDispatcherKey.self).withLock {
+            let dispatcher = self.locks.lock(for: EventDispatcherKey.self).withLock {
                 // Reuse an existing dispatcher when present.
                 if let existing = self.storage[EventDispatcherKey.self] {
                     return existing
@@ -20,12 +20,20 @@ extension Application {
                 self.storage[EventDispatcherKey.self] = dispatcher
                 return dispatcher
             }
+
+            // Install the default broadcaster and relay before listeners are added.
+            self.ensureBroadcast(for: dispatcher)
+
+            return dispatcher
         }
         set {
             // Replace the stored dispatcher.
             self.locks.lock(for: EventDispatcherKey.self).withLock {
                 self.storage[EventDispatcherKey.self] = newValue
             }
+
+            // Retire the broadcaster bound to the previous dispatcher.
+            self.retireBroadcast()
         }
     }
 
