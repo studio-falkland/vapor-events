@@ -7,9 +7,52 @@ on:
     branches: [main]
 
 jobs:
+  build-macos:
+    name: Build (macOS)
+    runs-on: macos-15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Build
+        run: swift build --build-tests --configuration debug 2>&1
+
   build-and-test:
     name: Build & Test
-    runs-on: macos-15
+    runs-on: ubuntu-latest
+    container: swift:6.2
+    timeout-minutes: 30
+
+    services:
+      postgres:
+        image: postgres:latest
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+      valkey:
+        image: valkey/valkey:latest
+        options: >-
+          --health-cmd "valkey-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DATABASE: postgres
+      VALKEY_HOST: valkey
+      VALKEY_PORT: 6379
 
     steps:
       - name: Checkout
