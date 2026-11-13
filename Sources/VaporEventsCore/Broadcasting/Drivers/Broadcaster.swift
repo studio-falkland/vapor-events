@@ -1,3 +1,4 @@
+import Logging
 import Synchronization
 
 /// Owns the broadcast connections and the drivers registered for them.
@@ -19,10 +20,17 @@ package final class Broadcaster: Sendable {
     /// The broadcaster state.
     private let state: Mutex<State>
 
+    /// The logger used for broadcast diagnostics.
+    private let logger: Logger
+
     /// Creates a broadcaster with the in-process driver registered.
-    package init() {
+    ///
+    /// - Parameter logger: The logger used for broadcast diagnostics.
+    package init(logger: Logger = Logger(label: "vapor-events.broadcaster")) {
+        self.logger = logger
+
         // Share one in-process driver between the default and explicit connection.
-        let inProcess = InProcessBroadcastDriver()
+        let inProcess = InProcessBroadcastDriver(logger: logger)
         self.state = Mutex(State(drivers: [
             .inProcess: inProcess,
             .default: inProcess,
@@ -35,6 +43,10 @@ package final class Broadcaster: Sendable {
     ///   - connection: The connection to register.
     ///   - driver: The driver to use.
     package func register(_ connection: BroadcastConnection, _ driver: any BroadcastDriver) {
+        self.logger.debug(
+            "Registering broadcast driver",
+            metadata: ["connection": .string(connection.rawValue)]
+        )
         self.state.withLock { state in
             state.drivers[connection] = driver
         }
@@ -44,6 +56,7 @@ package final class Broadcaster: Sendable {
     ///
     /// - Parameter driver: The driver to use.
     package func use(_ driver: any BroadcastDriver) {
+        self.logger.debug("Using driver as the default connection")
         self.state.withLock { state in
             state.drivers[.default] = driver
         }
@@ -53,6 +66,10 @@ package final class Broadcaster: Sendable {
     ///
     /// - Parameter connection: The connection to use.
     package func useDefault(_ connection: BroadcastConnection) {
+        self.logger.debug(
+            "Using connection as the default",
+            metadata: ["connection": .string(connection.rawValue)]
+        )
         self.state.withLock { state in
             guard let driver = state.drivers[connection] else {
                 preconditionFailure("No driver is registered for the \(connection) connection.")
@@ -65,6 +82,7 @@ package final class Broadcaster: Sendable {
     ///
     /// - Parameter envelope: The envelope to publish.
     package func publish<E: Event>(_ envelope: EventEnvelope<E>) async throws {
+        self.logger.trace("Publishing envelope", metadata: ["event": .string(E.name)])
         let driver = self.driver(for: E.self)
         try await driver.publish(envelope)
     }
@@ -74,6 +92,7 @@ package final class Broadcaster: Sendable {
     /// - Parameter type: The event type to subscribe to.
     /// - Returns: A cancellable subscription.
     package func subscribe<E: Event>(to type: E.Type) async -> EventSubscription<E> {
+        self.logger.trace("Subscribing to event", metadata: ["event": .string(E.name)])
         let driver = self.driver(for: E.self)
         return await driver.subscribe(to: type)
     }
@@ -88,6 +107,11 @@ package final class Broadcaster: Sendable {
             }
             return Array(state.drivers.values)
         }
+
+        self.logger.debug(
+            "Shutting down broadcaster",
+            metadata: ["drivers": .stringConvertible(drivers.count)]
+        )
 
         // Shut down each unique driver.
         var seen = Set<ObjectIdentifier>()
@@ -115,6 +139,10 @@ package final class Broadcaster: Sendable {
             guard let driver = state.drivers[connection] else {
                 preconditionFailure("No driver is registered for the \(connection) connection.")
             }
+            self.logger.debug(
+                "Resolved broadcast connection",
+                metadata: ["event": .string(E.name), "connection": .string(connection.rawValue)]
+            )
 
             // Pin the driver for this event type.
             state.resolved[key] = driver

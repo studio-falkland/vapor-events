@@ -25,6 +25,13 @@ public struct ListenerJob<L: EventListener>: AsyncJob {
     ///   - context: The queue context.
     ///   - payload: The event to handle.
     public func dequeue(_ context: QueueContext, _ payload: L.EventType) async throws {
+        context.logger.debug(
+            "Running queued listener",
+            metadata: [
+                "event": .string(L.EventType.name),
+                "listener": .string(String(reflecting: L.self)),
+            ]
+        )
         try await self.listener.handle(payload)
     }
 }

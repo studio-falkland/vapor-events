@@ -92,6 +92,10 @@ public final class PostgresBroadcastDriver: BroadcastDriver {
         }
 
         // Send the notification on the driver's single channel.
+        self.logger.trace(
+            "Publishing on Postgres",
+            metadata: ["event": .string(E.name), "channel": .string(self.channel)]
+        )
         let text = String(decoding: payload, as: UTF8.self)
         try await self.client.query(
             "SELECT pg_notify(\(self.channel), \(text))"
@@ -103,6 +107,11 @@ public final class PostgresBroadcastDriver: BroadcastDriver {
     /// - Parameter type: The event type to subscribe to.
     /// - Returns: A cancellable subscription.
     public func subscribe<E: Event>(to type: E.Type) async -> EventSubscription<E> {
+        self.logger.trace(
+            "Subscribing on Postgres",
+            metadata: ["event": .string(E.name), "channel": .string(self.channel)]
+        )
+
         // Register the event type, starting the listener when needed.
         guard let channel = self.multicast(for: E.self) else {
             // Shut down: return a stream that is already finished.
@@ -129,6 +138,10 @@ public final class PostgresBroadcastDriver: BroadcastDriver {
         }
 
         // Cancel the listener and finish the subscriber channels outside the lock.
+        self.logger.debug(
+            "Shutting down Postgres driver",
+            metadata: ["registrations": .stringConvertible(registrations.count)]
+        )
         listener?.cancel()
         for registration in registrations {
             registration.channel.finish()
@@ -163,6 +176,7 @@ public final class PostgresBroadcastDriver: BroadcastDriver {
 
             // Start the shared listener when the first event type is registered.
             if state.listener == nil {
+                self.logger.debug("Starting Postgres listener", metadata: ["channel": .string(self.channel)])
                 state.listener = self.listen()
             }
 
@@ -176,6 +190,7 @@ public final class PostgresBroadcastDriver: BroadcastDriver {
         let channelName = self.channel
         let logger = self.logger
         return Task { [weak self] in
+            logger.debug("Postgres listener task started", metadata: ["channel": .string(channelName)])
             var delay = Duration.seconds(1)
             while !Task.isCancelled {
                 do {
@@ -194,10 +209,12 @@ public final class PostgresBroadcastDriver: BroadcastDriver {
 
                     // Log the failure and back off before reconnecting.
                     logger.warning("Postgres notification listener for \(channelName) failed: \(error)")
+                    logger.debug("Reconnecting Postgres listener", metadata: ["channel": .string(channelName)])
                     try? await Task.sleep(for: delay)
                     delay = min(delay * 2, Self.maxReconnectDelay)
                 }
             }
+            logger.debug("Postgres listener task stopped", metadata: ["channel": .string(channelName)])
             self?.finishAll()
         }
     }
@@ -211,6 +228,7 @@ public final class PostgresBroadcastDriver: BroadcastDriver {
             self.logger.warning("Skipping a payload that is not a valid broadcast message.")
             return
         }
+        self.logger.trace("Routing Postgres message", metadata: ["event": .string(header.eventName)])
 
         // Look up the registration and deliver the payload.
         let registration = self.state.withLock { $0.registrations[header.eventName] }

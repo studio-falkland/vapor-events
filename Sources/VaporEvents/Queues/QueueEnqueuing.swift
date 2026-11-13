@@ -30,6 +30,14 @@ final class QueueEnqueuing: EventEnqueuing {
     ///
     /// - Parameter listener: The listener to register.
     func register<L: EventListener>(_ listener: L) {
+        self.application()?.logger.debug(
+            "Registering queued listener",
+            metadata: [
+                "event": .string(L.EventType.name),
+                "listener": .string(String(reflecting: L.self)),
+            ]
+        )
+
         // Register the job with the queue.
         self.application()?.queues.add(ListenerJob(listener: listener))
 
@@ -61,6 +69,10 @@ final class QueueEnqueuing: EventEnqueuing {
     func enqueue<E: Event>(_ event: E) async throws {
         // Snapshot the listeners for this event type, then enqueue outside the lock.
         let listeners = self.queued.withLock { $0[ObjectIdentifier(E.self)] ?? [] }
+        self.application()?.logger.trace(
+            "Enqueuing event for queued listeners",
+            metadata: ["event": .string(E.name), "listeners": .stringConvertible(listeners.count)]
+        )
         for listener in listeners {
             try await listener.enqueue(event)
         }

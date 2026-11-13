@@ -3,6 +3,7 @@ import FoundationEssentials
 #else
 import Foundation
 #endif
+import Logging
 
 /// The production ``EventBus``.
 ///
@@ -34,12 +35,21 @@ public actor EventDispatcher: EventBus, EventObserving {
     /// The handler used to enqueue ``ShouldQueue`` listeners.
     private let enqueuing: (any EventEnqueuing)?
 
+    /// The logger used for dispatch diagnostics.
+    nonisolated private let logger: Logger
+
     /// Creates a dispatcher.
     ///
-    /// - Parameter enqueuing: The handler used to enqueue ``ShouldQueue``
-    ///   listeners. The Vapor adapter supplies one automatically.
-    public init(enqueuing: (any EventEnqueuing)? = nil) {
+    /// - Parameters:
+    ///   - enqueuing: The handler used to enqueue ``ShouldQueue`` listeners.
+    ///     The Vapor adapter supplies one automatically.
+    ///   - logger: The logger used for dispatch diagnostics.
+    public init(
+        enqueuing: (any EventEnqueuing)? = nil,
+        logger: Logger = Logger(label: "vapor-events.dispatcher")
+    ) {
         self.enqueuing = enqueuing
+        self.logger = logger
     }
 
     /// Registers a listener for its event type.
@@ -52,6 +62,14 @@ public actor EventDispatcher: EventBus, EventObserving {
         // Resolve the event name and listener identity.
         let eventName = L.EventType.name
         let listenerName = String(reflecting: L.self)
+        self.logger.trace(
+            "Registering listener",
+            metadata: [
+                "event": .string(eventName),
+                "listener": .string(listenerName),
+                "priority": .stringConvertible(L.priority),
+            ]
+        )
 
         // Queued listeners are owned by the enqueuing, not the dispatcher.
         if L.self is any ShouldQueue.Type {
@@ -60,6 +78,10 @@ public actor EventDispatcher: EventBus, EventObserving {
                     "ShouldQueue listeners require an EventEnqueuing. Use the VaporEvents product or pass one to EventDispatcher.init(enqueuing:)."
                 )
             }
+            self.logger.debug(
+                "Registering queued listener",
+                metadata: ["event": .string(eventName), "listener": .string(listenerName)]
+            )
             enqueuing.register(listener)
             return
         }
@@ -102,6 +124,10 @@ public actor EventDispatcher: EventBus, EventObserving {
         // Resolve the event name and a unique listener identity.
         let eventName = E.name
         let listenerName = "closure:\(eventName):\(UUID().uuidString)"
+        self.logger.trace(
+            "Registering closure listener",
+            metadata: ["event": .string(eventName), "priority": .stringConvertible(priority)]
+        )
 
         // Cast incoming events back to the closure's event type.
         let handle: @Sendable (any Event) async throws -> Void = { event in
@@ -137,6 +163,8 @@ public actor EventDispatcher: EventBus, EventObserving {
         _ eventType: E.Type,
         bufferingPolicy: AsyncStream<E>.Continuation.BufferingPolicy
     ) async -> AsyncStream<E> {
+        self.logger.trace("Creating event stream", metadata: ["event": .string(E.name)])
+
         // Create the subscriber stream before notifying, so events dispatched
         // during notification are still buffered for this subscriber.
         let stream = self.channel(for: E.self).subscribe(bufferingPolicy: bufferingPolicy).stream
@@ -155,6 +183,8 @@ public actor EventDispatcher: EventBus, EventObserving {
     /// - Parameter event: The event to dispatch.
     /// - Throws: The first error thrown by a listener.
     public func dispatch<E: Event>(_ event: E) async throws {
+        self.logger.debug("Dispatching event", metadata: ["event": .string(E.name)])
+
         // Run listeners, then enqueue queued listeners.
         try await self.runListeners(event)
         try await self.enqueuing?.enqueue(event)
@@ -171,6 +201,8 @@ public actor EventDispatcher: EventBus, EventObserving {
     ///
     /// - Parameter event: The event to receive.
     public func receive<E: Event>(_ event: E) async throws {
+        self.logger.trace("Receiving event", metadata: ["event": .string(E.name)])
+
         // Run listeners and feed streams; queued listeners stay local.
         try await self.runListeners(event)
         self.sendToStreams(event)
@@ -181,8 +213,10 @@ public actor EventDispatcher: EventBus, EventObserving {
     /// - Parameter observer: The observer to add.
     /// - Returns: A cancellation that removes the observer.
     nonisolated package func observe(_ observer: any DispatchObserver) -> Cancellation {
+        self.logger.trace("Adding dispatch observer")
+
         // Register the observer and hand back its cancellation.
-        self.observers.add(observer, id: ObjectIdentifier(observer))
+        return self.observers.add(observer, id: ObjectIdentifier(observer))
     }
 
     /// Returns the multicast channel for an event type, creating it if needed.
@@ -203,10 +237,26 @@ public actor EventDispatcher: EventBus, EventObserving {
     private func runListeners<E: Event>(_ event: E) async throws {
         // Copy the registrations for this dispatch.
         let registrations = self.registrations[ObjectIdentifier(E.self)] ?? []
+        self.logger.trace(
+            "Running listeners",
+            metadata: ["event": .string(E.name), "count": .stringConvertible(registrations.count)]
+        )
 
         // Run listeners in order; the first error stops dispatch.
         for registration in registrations {
-            try await registration.handle(event)
+            do {
+                try await registration.handle(event)
+            } catch {
+                self.logger.debug(
+                    "Listener failed",
+                    metadata: [
+                        "event": .string(E.name),
+                        "listener": .string(registration.listenerName),
+                        "error": .string("\(error)"),
+                    ]
+                )
+                throw error
+            }
         }
     }
 
@@ -224,7 +274,12 @@ public actor EventDispatcher: EventBus, EventObserving {
         guard self.registeredEventTypes.insert(ObjectIdentifier(E.self)).inserted else { return }
 
         // Notify every observer.
-        for observer in self.observers.snapshot {
+        let observers = self.observers.snapshot
+        self.logger.trace(
+            "Notifying observers of registration",
+            metadata: ["event": .string(E.name), "observers": .stringConvertible(observers.count)]
+        )
+        for observer in observers {
             await observer.registered(E.self)
         }
     }
@@ -232,7 +287,12 @@ public actor EventDispatcher: EventBus, EventObserving {
     /// Notifies observers of a dispatch.
     private func notifyDispatched<E: Event>(_ event: E) async {
         // Notify every observer.
-        for observer in self.observers.snapshot {
+        let observers = self.observers.snapshot
+        self.logger.trace(
+            "Notifying observers of dispatch",
+            metadata: ["event": .string(E.name), "observers": .stringConvertible(observers.count)]
+        )
+        for observer in observers {
             await observer.dispatched(event)
         }
     }

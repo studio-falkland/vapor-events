@@ -22,7 +22,10 @@ extension Application {
     /// - Parameter dispatcher: The dispatcher to observe.
     func ensureBroadcast(for dispatcher: any EventBus) {
         // Only an observing bus can be relayed.
-        guard let observing = dispatcher as? (any EventBus & EventObserving) else { return }
+        guard let observing = dispatcher as? (any EventBus & EventObserving) else {
+            self.logger.trace("Broadcasting disabled: the event bus is not observable")
+            return
+        }
 
         self.locks.lock(for: BroadcastManagerKey.self).withLock {
             // Create the default manager once.
@@ -59,6 +62,7 @@ extension Application {
     /// Stops and removes the current broadcast manager.
     func retireBroadcast() {
         guard let manager = self.takeBroadcastManager() else { return }
+        self.logger.debug("Retiring broadcast manager")
         Task { await manager.shutdown() }
     }
 }

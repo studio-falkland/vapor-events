@@ -78,10 +78,15 @@ public final class ValkeyBroadcastDriver: BroadcastDriver {
         // Encode the envelope as a string payload.
         let payload = try JSONEncoder().encode(envelope)
         let text = String(decoding: payload, as: UTF8.self)
+        let channelName = self.channelName(for: E.name)
+        self.logger.trace(
+            "Publishing on Valkey",
+            metadata: ["event": .string(E.name), "channel": .string(channelName)]
+        )
 
         // Publish it on the event's channel.
         try await self.client.publish(
-            channel: self.channelName(for: E.name),
+            channel: channelName,
             message: text
         )
     }
@@ -91,6 +96,11 @@ public final class ValkeyBroadcastDriver: BroadcastDriver {
     /// - Parameter type: The event type to subscribe to.
     /// - Returns: A cancellable subscription.
     public func subscribe<E: Event>(to type: E.Type) async -> EventSubscription<E> {
+        self.logger.trace(
+            "Subscribing on Valkey",
+            metadata: ["event": .string(E.name), "channel": .string(self.channelName(for: E.name))]
+        )
+
         // Hand out a subscription that ends at once when already shut down.
         guard let channel = self.multicast(for: E.self) else {
             let (stream, continuation) = AsyncStream<EventEnvelope<E>>.makeStream()
@@ -111,6 +121,10 @@ public final class ValkeyBroadcastDriver: BroadcastDriver {
             defer { state.registrations.removeAll() }
             return Array(state.registrations.values)
         }
+        self.logger.debug(
+            "Shutting down Valkey driver",
+            metadata: ["registrations": .stringConvertible(all.count)]
+        )
         for registration in all {
             // Cancelling the task unsubscribes, then ends its subscribers.
             registration.task.cancel()
@@ -134,7 +148,9 @@ public final class ValkeyBroadcastDriver: BroadcastDriver {
 
             // Create the channel and start listening on the event's channel name.
             let channel = Multicast<EventEnvelope<E>>()
-            let task = self.listen(on: self.channelName(for: E.name), deliveringTo: channel)
+            let channelName = self.channelName(for: E.name)
+            self.logger.debug("Starting Valkey subscription", metadata: ["channel": .string(channelName)])
+            let task = self.listen(on: channelName, deliveringTo: channel)
             state.registrations[key] = Registration(channel: channel, task: task)
             return channel
         }
@@ -152,6 +168,7 @@ public final class ValkeyBroadcastDriver: BroadcastDriver {
         let client = self.client
         let logger = self.logger
         return Task {
+            logger.debug("Valkey subscription task started", metadata: ["channel": .string(channelName)])
             var delay = Duration.seconds(1)
 
             while !Task.isCancelled {
@@ -166,6 +183,10 @@ public final class ValkeyBroadcastDriver: BroadcastDriver {
                                 logger.warning("Skipping a payload on \(channelName) that is not a valid envelope.")
                                 continue
                             }
+                            logger.trace(
+                                "Received Valkey message",
+                                metadata: ["event": .string(E.name), "channel": .string(channelName)]
+                            )
                             channel.send(envelope)
                         }
                     }
@@ -179,10 +200,12 @@ public final class ValkeyBroadcastDriver: BroadcastDriver {
 
                     // Log the failure and back off before subscribing again.
                     logger.warning("Valkey subscription for \(channelName) failed: \(error)")
+                    logger.debug("Reconnecting Valkey subscription", metadata: ["channel": .string(channelName)])
                     try? await Task.sleep(for: delay)
                     delay = min(delay * 2, Self.maxReconnectDelay)
                 }
             }
+            logger.debug("Valkey subscription task stopped", metadata: ["channel": .string(channelName)])
             channel.finish()
         }
     }

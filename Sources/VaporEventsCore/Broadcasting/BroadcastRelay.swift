@@ -83,6 +83,7 @@ package final class BroadcastRelay: DispatchObserver, Sendable {
             return true
         }
         guard shouldStart else { return }
+        self.logger.debug("Starting broadcast relay", metadata: ["instance": .string(self.instanceID)])
 
         // Register with the dispatcher and keep the cancellation.
         let observation = self.dispatcher.observe(self)
@@ -111,6 +112,11 @@ package final class BroadcastRelay: DispatchObserver, Sendable {
             return (Array(state.subscriptions.values), state.observation)
         }
 
+        self.logger.debug(
+            "Stopping broadcast relay",
+            metadata: ["subscriptions": .stringConvertible(subscriptions.count)]
+        )
+
         // Cancel outside the lock, because cancellation can re-enter the relay.
         observation?.cancel()
         for subscription in subscriptions {
@@ -135,6 +141,7 @@ package final class BroadcastRelay: DispatchObserver, Sendable {
             return true
         }
         guard shouldSubscribe else { return }
+        self.logger.trace("Subscribing to broadcast event", metadata: ["event": .string(E.name)])
 
         // Subscribe and receive envelopes.
         let subscription = await self.broadcaster.subscribe(to: E.self)
@@ -143,8 +150,15 @@ package final class BroadcastRelay: DispatchObserver, Sendable {
         let task = Task { [weak self] in
             for await envelope in subscription {
                 // Ignore envelopes published by this instance.
-                guard envelope.origin != instanceID else { continue }
+                guard envelope.origin != instanceID else {
+                    logger.trace("Ignoring own broadcast event", metadata: ["event": .string(E.name)])
+                    continue
+                }
                 guard let self else { return }
+                self.logger.trace(
+                    "Received broadcast event",
+                    metadata: ["event": .string(E.name), "origin": .string(envelope.origin)]
+                )
 
                 // Deliver the envelope to local listeners.
                 do {
@@ -178,6 +192,8 @@ package final class BroadcastRelay: DispatchObserver, Sendable {
         // Only broadcast events are published, and only after starting.
         guard E.self is any ShouldBroadcast.Type else { return }
         guard self.state.withLock({ $0.isStarted }) else { return }
+
+        self.logger.trace("Publishing broadcast event", metadata: ["event": .string(E.name)])
 
         // Build and publish the envelope.
         let envelope = EventEnvelope(event: event, origin: self.instanceID)

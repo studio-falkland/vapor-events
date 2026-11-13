@@ -9,13 +9,17 @@ package final class BroadcastManager: Sendable {
     /// The relay observing the event bus.
     let relay: BroadcastRelay
 
+    /// The logger used for broadcast diagnostics.
+    private let logger: Logger
+
     /// Creates a broadcast manager.
     ///
     /// - Parameters:
     ///   - dispatcher: The dispatcher the relay observes.
     ///   - logger: The logger used for transport failures.
     package init(dispatcher: any EventBus & EventObserving, logger: Logger) {
-        let broadcaster = Broadcaster()
+        self.logger = logger
+        let broadcaster = Broadcaster(logger: logger)
         self.broadcaster = broadcaster
         self.relay = BroadcastRelay(
             broadcaster: broadcaster,
@@ -26,11 +30,13 @@ package final class BroadcastManager: Sendable {
 
     /// Starts observing the event bus.
     package func start() {
+        self.logger.debug("Starting broadcast manager")
         self.relay.start()
     }
 
     /// Stops observing and releases the drivers.
     package func shutdown() async {
+        self.logger.debug("Shutting down broadcast manager")
         self.relay.shutdown()
         await self.broadcaster.shutdown()
     }
