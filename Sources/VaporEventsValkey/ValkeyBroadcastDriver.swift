@@ -27,6 +27,12 @@ public final class ValkeyBroadcastDriver: BroadcastDriver {
 
     /// A subscriber channel and its listener task.
     private struct Registration: Sendable {
+        /// The Valkey channel name.
+        let channelName: String
+
+        /// The event type name, used for diagnostics.
+        let typeName: String
+
         /// The channel fed by the listener.
         let channel: any AnyMulticast
 
@@ -93,6 +99,9 @@ public final class ValkeyBroadcastDriver: BroadcastDriver {
 
     /// Subscribes to envelopes of one event type.
     ///
+    /// If another event type maps to the same channel name, the subscription
+    /// is skipped and the returned stream is already finished.
+    ///
     /// - Parameter type: The event type to subscribe to.
     /// - Returns: A cancellable subscription.
     public func subscribe<E: Event>(to type: E.Type) async -> EventSubscription<E> {
@@ -101,7 +110,8 @@ public final class ValkeyBroadcastDriver: BroadcastDriver {
             metadata: ["event": .string(E.name), "channel": .string(self.channelName(for: E.name))]
         )
 
-        // Hand out a subscription that ends at once when already shut down.
+        // Hand out a subscription that ends at once when already shut down or
+        // when the channel name is already claimed by another type.
         guard let channel = self.multicast(for: E.self) else {
             let (stream, continuation) = AsyncStream<EventEnvelope<E>>.makeStream()
             continuation.finish()
@@ -135,9 +145,11 @@ public final class ValkeyBroadcastDriver: BroadcastDriver {
     /// Returns the channel for an event type, creating it and its listener when needed.
     ///
     /// - Parameter type: The event type.
-    /// - Returns: The channel, or `nil` when the driver is shut down.
+    /// - Returns: The channel, or `nil` when the driver is shut down or the
+    ///   channel name is already claimed by another type.
     private func multicast<E: Event>(for type: E.Type) -> Multicast<EventEnvelope<E>>? {
         let key = ObjectIdentifier(E.self)
+        let channelName = self.channelName(for: E.name)
         return self.state.withLock { state in
             guard !state.isShuttingDown else { return nil }
 
@@ -146,12 +158,30 @@ public final class ValkeyBroadcastDriver: BroadcastDriver {
                 return existing
             }
 
+            // Reject a different type that maps to the same channel name.
+            if let existing = state.registrations.values.first(where: { $0.channelName == channelName }) {
+                self.logger.error(
+                    "Skipping broadcast subscription for a duplicate channel name",
+                    metadata: [
+                        "event": .string(E.name),
+                        "channel": .string(channelName),
+                        "existing": .string(existing.typeName),
+                        "new": .string(String(reflecting: E.self)),
+                    ]
+                )
+                return nil
+            }
+
             // Create the channel and start listening on the event's channel name.
             let channel = Multicast<EventEnvelope<E>>()
-            let channelName = self.channelName(for: E.name)
             self.logger.debug("Starting Valkey subscription", metadata: ["channel": .string(channelName)])
             let task = self.listen(on: channelName, deliveringTo: channel)
-            state.registrations[key] = Registration(channel: channel, task: task)
+            state.registrations[key] = Registration(
+                channelName: channelName,
+                typeName: String(reflecting: E.self),
+                channel: channel,
+                task: task
+            )
             return channel
         }
     }

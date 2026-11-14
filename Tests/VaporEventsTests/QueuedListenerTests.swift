@@ -90,4 +90,23 @@ struct QueuedListenerTests {
         #expect(payloads.isEmpty)
         #expect(handled.isEmpty)
     }
+
+    @Test
+    func duplicateQueuedListenerIsSkipped() async throws {
+        // Create a testing application with the test queue.
+        let app = try await Application.make(.testing)
+        defer { Task { try? await app.asyncShutdown() } }
+        app.queues.use(.asyncTest)
+
+        // Register the same queued listener type twice and dispatch.
+        let recorder = QueuedRecorder()
+        await app.events.listen(QueuedOrderListener(recorder: recorder))
+        await app.events.listen(QueuedOrderListener(recorder: recorder))
+        let id = UUID()
+        try await app.events.dispatch(QueuedOrderShipped(orderID: id))
+
+        // Verify only one job was enqueued.
+        let payloads = app.queues.asyncTest.all(ListenerJob<QueuedOrderListener>.self)
+        #expect(payloads.map(\.orderID) == [id])
+    }
 }

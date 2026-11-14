@@ -36,9 +36,9 @@ struct ApplicationEventsTests {
         defer { Task { try? await app.asyncShutdown() } }
 
         // Verify the accessor returns one shared dispatcher.
-        let first = app.events
-        let second = app.events
-        #expect((first as AnyObject) === (second as AnyObject))
+        let first = try #require(app.events as? EventDispatcher)
+        let second = try #require(app.events as? EventDispatcher)
+        #expect(first === second)
     }
 
     @Test

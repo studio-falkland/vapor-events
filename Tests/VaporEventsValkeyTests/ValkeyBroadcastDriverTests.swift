@@ -86,6 +86,59 @@ struct ValkeyBroadcastChannelTests {
     }
 }
 
+struct ChannelCollisionA: Event {
+    static var name: String { "App.Order.Created" }
+    let id: UUID
+}
+
+struct ChannelCollisionB: Event {
+    static var name: String { "App_Order_Created" }
+    let id: UUID
+}
+
+@Suite("ValkeyBroadcastDriver collisions")
+struct ValkeyBroadcastDriverCollisionTests {
+    @Test
+    func skipsDuplicateChannelName() async throws {
+        // Create a client without running it; the collision check happens first.
+        let logger = Logger(label: "test")
+        let client = ValkeyClient(.hostname("localhost", port: 6379), logger: logger)
+        let driver = ValkeyBroadcastDriver(client: client, channelPrefix: "test", logger: logger)
+
+        // Subscribe to two event types that map to the same channel.
+        let first = await driver.subscribe(to: ChannelCollisionA.self)
+        let second = await driver.subscribe(to: ChannelCollisionB.self)
+
+        // The second subscription is finished.
+        let received = await next(second)
+        #expect(received == nil)
+
+        // Clean up.
+        first.cancel()
+        await driver.shutdown()
+    }
+}
+
+/// Reads the next envelope with a timeout.
+private func next<E: Event>(
+    _ subscription: EventSubscription<E>,
+    timeout: Duration = .milliseconds(100)
+) async -> EventEnvelope<E>? {
+    await withTaskGroup(of: EventEnvelope<E>?.self) { group in
+        group.addTask {
+            var iterator = subscription.makeAsyncIterator()
+            return await iterator.next()
+        }
+        group.addTask {
+            try? await Task.sleep(for: timeout)
+            return nil
+        }
+        let result = await group.next() ?? nil
+        group.cancelAll()
+        return result
+    }
+}
+
 private enum ValkeyTestEnvironment {
     static var isConfigured: Bool {
         ProcessInfo.processInfo.environment["VALKEY_HOST"] != nil

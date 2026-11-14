@@ -36,6 +36,12 @@ public final class PostgresBroadcastDriver: BroadcastDriver {
 
     /// A subscriber channel and the closure that delivers to it.
     private struct Registration: Sendable {
+        /// The event type that owns the registration.
+        let type: ObjectIdentifier
+
+        /// The event type name, used for diagnostics.
+        let typeName: String
+
         /// The channel fed by the listener.
         let channel: any AnyMulticast
 
@@ -107,6 +113,9 @@ public final class PostgresBroadcastDriver: BroadcastDriver {
 
     /// Subscribes to envelopes of one event type.
     ///
+    /// If another event type already uses the same ``Event/name``, the
+    /// subscription is skipped and the returned stream is already finished.
+    ///
     /// - Parameter type: The event type to subscribe to.
     /// - Returns: A cancellable subscription.
     public func subscribe<E: Event>(to type: E.Type) async -> EventSubscription<E> {
@@ -117,7 +126,7 @@ public final class PostgresBroadcastDriver: BroadcastDriver {
 
         // Register the event type, starting the listener when needed.
         guard let channel = self.multicast(for: E.self) else {
-            // Shut down: return a stream that is already finished.
+            // Shut down or duplicate event name: return a finished stream.
             let (stream, continuation) = AsyncStream<EventEnvelope<E>>.makeStream()
             continuation.finish()
             return EventSubscription(stream: stream, cancel: {})
@@ -154,20 +163,34 @@ public final class PostgresBroadcastDriver: BroadcastDriver {
     /// Returns the channel for an event type, registering it when needed.
     ///
     /// - Parameter type: The event type.
-    /// - Returns: The channel, or `nil` when the driver is shut down.
+    /// - Returns: The channel, or `nil` when the driver is shut down or the
+    ///   event name is already claimed by another type.
     private func multicast<E: Event>(for type: E.Type) -> Multicast<EventEnvelope<E>>? {
         let key = E.name
         return self.state.withLock { state in
             guard !state.isShuttingDown else { return nil }
 
             // Reuse the existing channel for the event type.
-            if let existing = state.registrations[key]?.channel as? Multicast<EventEnvelope<E>> {
-                return existing
+            if let existing = state.registrations[key] {
+                guard existing.type == ObjectIdentifier(E.self) else {
+                    self.logger.error(
+                        "Skipping broadcast subscription for a duplicate event name",
+                        metadata: [
+                            "event": .string(key),
+                            "existing": .string(existing.typeName),
+                            "new": .string(String(reflecting: E.self)),
+                        ]
+                    )
+                    return nil
+                }
+                return existing.channel as? Multicast<EventEnvelope<E>>
             }
 
             // Create the channel and its registration.
             let channel = Multicast<EventEnvelope<E>>()
             state.registrations[key] = Registration(
+                type: ObjectIdentifier(E.self),
+                typeName: String(reflecting: E.self),
                 channel: channel,
                 send: { data in
                     guard let message = try? JSONDecoder().decode(BroadcastMessage<E>.self, from: data) else {

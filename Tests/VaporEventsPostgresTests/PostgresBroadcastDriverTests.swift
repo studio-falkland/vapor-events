@@ -85,6 +85,41 @@ struct PostgresBroadcastDriverPayloadTests {
     }
 }
 
+struct CollidingEventA: Event {
+    static var name: String { "collision" }
+    let id: UUID
+}
+
+struct CollidingEventB: Event {
+    static var name: String { "collision" }
+    let id: UUID
+}
+
+@Suite("PostgresBroadcastDriver collisions")
+struct PostgresBroadcastDriverCollisionTests {
+    @Test
+    func skipsDuplicateEventName() async throws {
+        // Create a client without running it; the collision check happens first.
+        let client = PostgresClient(
+            configuration: PostgresTestEnvironment.configuration,
+            backgroundLogger: Logger(label: "test")
+        )
+        let broadcaster = PostgresBroadcastDriver(client: client)
+
+        // Subscribe to two event types that share a name.
+        let first = await broadcaster.subscribe(to: CollidingEventA.self)
+        let second = await broadcaster.subscribe(to: CollidingEventB.self)
+
+        // The second subscription is finished.
+        let received = await next(second, timeout: .milliseconds(100))
+        #expect(received == nil)
+
+        // Clean up.
+        first.cancel()
+        await broadcaster.shutdown()
+    }
+}
+
 /// Reads the next envelope with a timeout.
 private func next<E: Event>(
     _ subscription: EventSubscription<E>,

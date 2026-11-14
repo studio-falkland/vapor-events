@@ -10,6 +10,7 @@ final class QueueEnqueuing: EventEnqueuing {
     /// A queued listener and its priority.
     private struct Queued: Sendable {
         let priority: Int
+        let listenerType: ObjectIdentifier
         let enqueue: @Sendable (any Event) async throws -> Void
     }
 
@@ -28,13 +29,35 @@ final class QueueEnqueuing: EventEnqueuing {
 
     /// Registers a queued listener as a job.
     ///
+    /// A second instance of the same listener type is skipped, because the
+    /// queue keys jobs by type and would run only the last one.
+    ///
     /// - Parameter listener: The listener to register.
     func register<L: EventListener>(_ listener: L) {
+        let eventKey = ObjectIdentifier(L.EventType.self)
+        let listenerType = ObjectIdentifier(L.self)
+        let listenerName = String(reflecting: L.self)
+
+        // Reject a second instance of the same listener type.
+        let isDuplicate = self.queued.withLock { state in
+            (state[eventKey] ?? []).contains { $0.listenerType == listenerType }
+        }
+        guard !isDuplicate else {
+            self.application()?.logger.error(
+                "Skipping duplicate queued listener",
+                metadata: [
+                    "event": .string(L.EventType.name),
+                    "listener": .string(listenerName),
+                ]
+            )
+            return
+        }
+
         self.application()?.logger.debug(
             "Registering queued listener",
             metadata: [
                 "event": .string(L.EventType.name),
-                "listener": .string(String(reflecting: L.self)),
+                "listener": .string(listenerName),
             ]
         )
 
@@ -56,10 +79,10 @@ final class QueueEnqueuing: EventEnqueuing {
 
         // Insert the listener in priority order.
         self.queued.withLock { state in
-            var list = state[ObjectIdentifier(L.EventType.self)] ?? []
+            var list = state[eventKey] ?? []
             let index = list.firstIndex { $0.priority < L.priority } ?? list.endIndex
-            list.insert(Queued(priority: L.priority, enqueue: enqueue), at: index)
-            state[ObjectIdentifier(L.EventType.self)] = list
+            list.insert(Queued(priority: L.priority, listenerType: listenerType, enqueue: enqueue), at: index)
+            state[eventKey] = list
         }
     }
 

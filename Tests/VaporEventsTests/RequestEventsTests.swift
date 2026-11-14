@@ -19,6 +19,8 @@ struct RequestEventsTests {
         )
 
         // Verify the request uses the application's dispatcher.
-        #expect((request.events as AnyObject) === (app.events as AnyObject))
+        let requestDispatcher = try #require(request.events as? EventDispatcher)
+        let appDispatcher = try #require(app.events as? EventDispatcher)
+        #expect(requestDispatcher === appDispatcher)
     }
 }
