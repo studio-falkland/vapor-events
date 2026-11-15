@@ -64,6 +64,9 @@ public final class PostgresBroadcastDriver: BroadcastDriver {
     /// The client used for publishing and listening.
     private let client: PostgresClient
 
+    /// The task running a client the driver owns, if any.
+    private let clientTask: Task<Void, Never>?
+
     /// The single `LISTEN`/`NOTIFY` channel.
     private let channel: String
 
@@ -87,6 +90,31 @@ public final class PostgresBroadcastDriver: BroadcastDriver {
         self.client = client
         self.channel = Self.channelName(channel)
         self.logger = logger
+        self.clientTask = nil
+    }
+
+    /// Creates a Postgres broadcaster that owns its client.
+    ///
+    /// The driver starts the client immediately and stops it in ``shutdown()``.
+    ///
+    /// - Parameters:
+    ///   - configuration: The Postgres client configuration.
+    ///   - channel: The `LISTEN`/`NOTIFY` channel used for every event type.
+    ///   - logger: The logger used for transport failures.
+    public init(
+        configuration: PostgresClient.Configuration,
+        channel: String = "vapor_events",
+        logger: Logger = Logger(label: "vapor-events.postgres")
+    ) {
+        // Create the client and start it, so subscriptions can lease connections.
+        let client = PostgresClient(
+            configuration: configuration,
+            backgroundLogger: logger
+        )
+        self.client = client
+        self.channel = Self.channelName(channel)
+        self.logger = logger
+        self.clientTask = Task { await client.run() }
     }
 
     /// Publishes an envelope.
@@ -158,6 +186,9 @@ public final class PostgresBroadcastDriver: BroadcastDriver {
         for registration in registrations {
             registration.channel.finish()
         }
+
+        // Stop the client the driver owns, if any.
+        self.clientTask?.cancel()
     }
 
     /// Returns the channel for an event type, registering it when needed.

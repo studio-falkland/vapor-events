@@ -1,5 +1,5 @@
+import Logging
 import Valkey
-import Vapor
 import VaporEvents
 
 extension BroadcastDriverFactory {
@@ -21,11 +21,11 @@ extension BroadcastDriverFactory {
         client: any ValkeyClientProtocol,
         channelPrefix: String = "vapor_events"
     ) -> Self {
-        Self { application in
+        Self { logger in
             ValkeyBroadcastDriver(
                 client: client,
                 channelPrefix: channelPrefix,
-                logger: application.logger
+                logger: logger
             )
         }
     }

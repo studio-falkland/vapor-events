@@ -1,5 +1,5 @@
+import Logging
 import PostgresNIO
-import Vapor
 import VaporEvents
 
 extension BroadcastDriverFactory {
@@ -16,19 +16,18 @@ extension BroadcastDriverFactory {
         client: PostgresClient,
         channel: String = "vapor_events"
     ) -> Self {
-        Self { application in
+        Self { logger in
             PostgresBroadcastDriver(
                 client: client,
                 channel: channel,
-                logger: application.logger
+                logger: logger
             )
         }
     }
 
     /// A driver backed by Postgres `LISTEN`/`NOTIFY`.
     ///
-    /// Creates a dedicated client, runs it for the lifetime of the application,
-    /// and stops it on shutdown.
+    /// The driver creates and runs its own client, and stops it on shutdown.
     ///
     /// - Parameters:
     ///   - configuration: The Postgres client configuration.
@@ -38,50 +37,13 @@ extension BroadcastDriverFactory {
         configuration: PostgresClient.Configuration,
         channel: String = "vapor_events"
     ) -> Self {
-        Self { application in
-            // Create the client and start it immediately, so subscriptions made
-            // during configuration can lease connections.
-            let client = PostgresClient(
+        Self { logger in
+            PostgresBroadcastDriver(
                 configuration: configuration,
-                backgroundLogger: application.logger
-            )
-            let driver = PostgresBroadcastDriver(
-                client: client,
                 channel: channel,
-                logger: application.logger
+                logger: logger
             )
-
-            // Stop the driver before the client it depends on.
-            application.lifecycle.use(PostgresClientLifecycle(client: client, driver: driver))
-
-            return driver
         }
-    }
-}
-
-/// Stops a Postgres client with the application lifecycle.
-private final class PostgresClientLifecycle: LifecycleHandler {
-    /// The driver using the client.
-    private let driver: PostgresBroadcastDriver
-
-    /// The task running the client.
-    private let task: Task<Void, Never>
-
-    init(client: PostgresClient, driver: PostgresBroadcastDriver) {
-        self.driver = driver
-
-        // Start the client; its task ends when the application shuts down.
-        self.task = Task {
-            await client.run()
-        }
-    }
-
-    func shutdownAsync(_ application: Application) async {
-        // Stop the driver before the client it depends on.
-        await self.driver.shutdown()
-
-        // Stop the client.
-        self.task.cancel()
     }
 }
 

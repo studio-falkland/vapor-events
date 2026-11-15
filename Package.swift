@@ -1,10 +1,10 @@
-// swift-tools-version: 6.0
+// swift-tools-version: 6.4
 import PackageDescription
 
 let package = Package(
     name: "vapor-events",
     platforms: [
-        .macOS(.v15),
+        .macOS("26.2"),
     ],
     products: [
         .library(name: "VaporEvents", targets: ["VaporEvents"]),
@@ -12,11 +12,10 @@ let package = Package(
         .library(name: "VaporEventsValkey", targets: ["VaporEventsValkey"]),
     ],
     dependencies: [
-        .package(url: "https://github.com/vapor/vapor.git", from: "4.122.3"),
+        .package(url: "https://github.com/vapor/vapor.git", from: "5.0.0-beta.4"),
         .package(url: "https://github.com/vapor/postgres-nio.git", from: "1.33.1"),
         .package(url: "https://github.com/valkey-io/valkey-swift.git", from: "1.6.0"),
-        .package(url: "https://github.com/vapor/queues.git", from: "1.0.0"),
-        .package(url: "https://github.com/apple/swift-log.git", from: "1.5.0"),
+        .package(url: "https://github.com/apple/swift-log.git", from: "1.14.0"),
     ],
     targets: [
         .target(
@@ -30,7 +29,7 @@ let package = Package(
             dependencies: [
                 "VaporEventsCore",
                 .product(name: "Vapor", package: "vapor"),
-                .product(name: "Queues", package: "queues"),
+                .product(name: "Logging", package: "swift-log"),
             ]
         ),
         .target(
@@ -38,7 +37,6 @@ let package = Package(
             dependencies: [
                 "VaporEventsCore",
                 "VaporEvents",
-                .product(name: "Vapor", package: "vapor"),
                 .product(name: "PostgresNIO", package: "postgres-nio"),
                 .product(name: "Logging", package: "swift-log"),
             ]
@@ -48,7 +46,6 @@ let package = Package(
             dependencies: [
                 "VaporEventsCore",
                 "VaporEvents",
-                .product(name: "Vapor", package: "vapor"),
                 .product(name: "Valkey", package: "valkey-swift"),
                 .product(name: "Logging", package: "swift-log"),
             ]
@@ -62,16 +59,22 @@ let package = Package(
             dependencies: [
                 "VaporEvents",
                 .product(name: "Vapor", package: "vapor"),
-                .product(name: "XCTQueues", package: "queues"),
+                .product(name: "VaporTesting", package: "vapor"),
             ]
         ),
         .testTarget(
             name: "VaporEventsPostgresTests",
-            dependencies: ["VaporEventsPostgres"]
+            dependencies: [
+                "VaporEventsCore",
+                "VaporEventsPostgres",
+                .product(name: "PostgresNIO", package: "postgres-nio"),
+                .product(name: "Logging", package: "swift-log"),
+            ]
         ),
         .testTarget(
             name: "VaporEventsValkeyTests",
             dependencies: [
+                "VaporEventsCore",
                 "VaporEventsValkey",
                 .product(name: "Valkey", package: "valkey-swift"),
                 .product(name: "Logging", package: "swift-log"),

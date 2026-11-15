@@ -1,74 +1,76 @@
-import Vapor
 import VaporEventsCore
 
-extension Application {
-    /// A facade for the application's broadcast configuration.
-    public struct Broadcast: Sendable {
-        /// The application.
-        public let application: Application
+/// A facade for the application's broadcast configuration.
+///
+/// Obtain one from ``Events/broadcast`` and register drivers before listeners
+/// are added:
+///
+/// ```swift
+/// events.broadcast.use(.postgres(configuration: configuration))
+/// ```
+public struct Broadcast: Sendable {
+    /// The manager that owns the broadcaster and relay.
+    private let manager: BroadcastManager?
 
-        /// Uses a driver as the default connection.
-        ///
-        /// - Parameter driver: The driver to use.
-        /// - Returns: This facade, for chaining.
-        @discardableResult
-        public func use(_ driver: any BroadcastDriver) -> Self {
-            self.broadcaster.use(driver)
-            return self
-        }
+    /// Creates a facade over a broadcast manager.
+    init(manager: BroadcastManager?) {
+        self.manager = manager
+    }
 
-        /// Uses a driver factory as the default connection.
-        ///
-        /// - Parameter factory: The factory that builds the driver.
-        /// - Returns: This facade, for chaining.
-        @discardableResult
-        public func use(_ factory: BroadcastDriverFactory) -> Self {
-            self.use(factory.driver(for: self.application))
-        }
+    /// Uses a driver as the default connection.
+    ///
+    /// - Parameter driver: The driver to use.
+    /// - Returns: This facade, for chaining.
+    @discardableResult
+    public func use(_ driver: any BroadcastDriver) -> Self {
+        self.manager?.broadcaster.use(driver)
+        return self
+    }
 
-        /// Registers a driver for a connection.
-        ///
-        /// - Parameters:
-        ///   - connection: The connection to register.
-        ///   - driver: The driver to use.
-        /// - Returns: This facade, for chaining.
-        @discardableResult
-        public func register(_ connection: BroadcastConnection, _ driver: any BroadcastDriver) -> Self {
-            self.broadcaster.register(connection, driver)
-            return self
-        }
+    /// Uses a driver factory as the default connection.
+    ///
+    /// - Parameter factory: The factory that builds the driver.
+    /// - Returns: This facade, for chaining.
+    @discardableResult
+    public func use(_ factory: BroadcastDriverFactory) -> Self {
+        self.use(factory.driver())
+    }
 
-        /// Registers a driver factory for a connection.
-        ///
-        /// - Parameters:
-        ///   - connection: The connection to register.
-        ///   - factory: The factory that builds the driver.
-        /// - Returns: This facade, for chaining.
-        @discardableResult
-        public func register(_ connection: BroadcastConnection, _ factory: BroadcastDriverFactory) -> Self {
-            self.register(connection, factory.driver(for: self.application))
-        }
+    /// Registers a driver for a connection.
+    ///
+    /// - Parameters:
+    ///   - connection: The connection to register.
+    ///   - driver: The driver to use.
+    /// - Returns: This facade, for chaining.
+    @discardableResult
+    public func register(_ connection: BroadcastConnection, _ driver: any BroadcastDriver) -> Self {
+        self.manager?.broadcaster.register(connection, driver)
+        return self
+    }
 
-        /// Uses a registered connection as the default.
-        ///
-        /// - Parameter connection: The connection to use.
-        /// - Returns: This facade, for chaining.
-        @discardableResult
-        public func useDefault(_ connection: BroadcastConnection) -> Self {
-            self.broadcaster.useDefault(connection)
-            return self
-        }
+    /// Registers a driver factory for a connection.
+    ///
+    /// - Parameters:
+    ///   - connection: The connection to register.
+    ///   - factory: The factory that builds the driver.
+    /// - Returns: This facade, for chaining.
+    @discardableResult
+    public func register(_ connection: BroadcastConnection, _ factory: BroadcastDriverFactory) -> Self {
+        self.register(connection, factory.driver())
+    }
 
-        /// The application's broadcaster.
-        private var broadcaster: Broadcaster {
-            // Ensure the default manager exists.
-            _ = self.application.events
+    /// Uses a registered connection as the default.
+    ///
+    /// - Parameter connection: The connection to use.
+    /// - Returns: This facade, for chaining.
+    @discardableResult
+    public func useDefault(_ connection: BroadcastConnection) -> Self {
+        self.manager?.broadcaster.useDefault(connection)
+        return self
+    }
 
-            // Read the installed broadcaster.
-            guard let manager = self.application.broadcastManager() else {
-                preconditionFailure("The broadcast relay requires an observing event bus.")
-            }
-            return manager.broadcaster
-        }
+    /// Stops the relay and releases the drivers.
+    func shutdown() async {
+        await self.manager?.shutdown()
     }
 }
