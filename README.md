@@ -3,17 +3,17 @@
 </p>
 
 <p align="center">
-  <a href="https://swift.org"><img src="https://img.shields.io/badge/Swift-6.0+-F05138?logo=swift&logoColor=white" alt="Swift 6.0+"></a>
+  <a href="https://swift.org"><img src="https://img.shields.io/badge/Swift-6.4+-F05138?logo=swift&logoColor=white" alt="Swift 6.4+"></a>
   <a href="https://swift.org/package-manager"><img src="https://img.shields.io/badge/SPM-compatible-4BC51D?logo=swift&logoColor=white" alt="SPM Compatible"></a>
-  <a href="https://github.com/vapor/vapor"><img src="https://img.shields.io/badge/Vapor-4-6DBEEB?logo=vapor&logoColor=white" alt="Vapor 4"></a>
+  <a href="https://github.com/vapor/vapor"><img src="https://img.shields.io/badge/Vapor-5-6DBEEB?logo=vapor&logoColor=white" alt="Vapor 5"></a>
   <a href="LICENSE.md"><img src="https://img.shields.io/badge/License-EUPL--1.2-blue.svg" alt="License: EUPL-1.2"></a>
 </p>
 
 ## Introduction
 
 `vapor-events` is an event system for Vapor. Events dispatch locally by
-default, can be broadcast to other application instances, and can be handled by
-queued listeners.
+default and can be broadcast to other application instances. On the Vapor 4
+line, listeners can also be handled by queued jobs.
 
 ## Installation
 
@@ -21,8 +21,8 @@ Add the package to your Vapor project's `Package.swift`:
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/vapor/vapor.git", from: "4.122.3"),
-    .package(url: "https://github.com/studio-falkland/vapor-events", from: "1.0.0"),
+    .package(url: "https://github.com/vapor/vapor.git", from: "5.0.0-beta.4"),
+    .package(url: "https://github.com/studio-falkland/vapor-events", branch: "vapor5"),
 ],
 targets: [
     .target(name: "App", dependencies: [
@@ -32,8 +32,8 @@ targets: [
 ]
 ```
 
-`VaporEvents` includes the core event bus, the Vapor adapter, and queued
-listeners. Add a transport product when you need cross-instance broadcasting:
+`VaporEvents` includes the core event bus and the Vapor adapter. Add a
+transport product when you need cross-instance broadcasting:
 
 | Product | Transport |
 |---|---|
@@ -58,23 +58,32 @@ struct SendReceipt: EventListener {
 }
 ```
 
+Create an `Events` holder in `configure`, register it with the application
+lifecycle, and pass it to the controllers that need it:
+
+```swift
+let events = Events()
+app.addLifecycleHandler(events)
+try await routes(app, events: events)
+```
+
 Register listeners in `configure`:
 
 ```swift
-await app.events.listen(SendReceipt(mailer: app.mailer))
+await events.bus.listen(SendReceipt(mailer: app.mailer))
 ```
 
 Dispatch from a route:
 
 ```swift
-try await req.events.dispatch(OrderShipped(orderID: id))
+try await events.bus.dispatch(OrderShipped(orderID: id))
 ```
 
 Stream events as an `AsyncSequence`:
 
 ```swift
-let events = await req.events.stream(OrderShipped.self)
-for await event in events {
+let stream = await events.bus.stream(OrderShipped.self)
+for await event in stream {
     // Consume the event.
 }
 ```
@@ -95,7 +104,7 @@ Configure a driver in `configure`. With `VaporEventsPostgres`:
 ```swift
 import VaporEventsPostgres
 
-app.broadcast.use(.postgres(configuration: .init(/* … */)))
+events.broadcast.use(.postgres(configuration: .init(/* … */)))
 ```
 
 With `VaporEventsValkey`:
@@ -103,7 +112,7 @@ With `VaporEventsValkey`:
 ```swift
 import VaporEventsValkey
 
-app.broadcast.use(.valkey(client: client))
+events.broadcast.use(.valkey(client: client))
 ```
 
 The Postgres factory creates and runs its own client for the application's
@@ -129,12 +138,17 @@ struct SendReceipt: ShouldQueue {
 Register it the same way:
 
 ```swift
-await app.events.listen(SendReceipt(mailer: app.mailer))
+await events.bus.listen(SendReceipt(mailer: app.mailer))
 ```
 
-The Vapor adapter registers the listener with `app.queues` and enqueues it on
-dispatch. Queued listeners require [vapor/queues](https://github.com/vapor/queues),
-which `VaporEvents` already depends on.
+On the Vapor 4 line, the adapter registers the listener with `app.queues` and
+enqueues it on dispatch. On the Vapor 5 line, [vapor/queues](https://github.com/vapor/queues)
+has no release yet, so queued listeners require a custom `EventEnqueuing`
+passed to `Events`:
+
+```swift
+let events = Events(enqueuing: MyEnqueuing())
+```
 
 ## Testing
 
@@ -142,10 +156,9 @@ Use the fake dispatcher to record events without running listeners:
 
 ```swift
 let fake = FakeEventDispatcher()
-app.events = fake
 
-try await req.events.dispatch(OrderShipped(orderID: id))
-let events = await fake.dispatched(OrderShipped.self)
+await fake.dispatch(OrderShipped(orderID: id))
+let dispatched = await fake.dispatched(OrderShipped.self)
 ```
 
 The fake also provides `assertDispatched`, `assertNotDispatched`, and
